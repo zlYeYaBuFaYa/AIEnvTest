@@ -302,5 +302,12 @@
   "repair.udpPort": "トンネルの UDP ポート",
   "repair.udpResolver": "トンネルの DNS サーバー IP",
   "repair.udpRestoreFirst": "トンネルの例外や物理アダプターを変更する前に、現在の AIEnv UDP ポリシーを復元してください。",
-  "repair.udpExisting": "判定不能：PF にトンネル、DNS、DHCP の例外に該当しない UDP 接続があるか、その接続先を確認できません。該当するアプリを終了し、接続状態が期限切れになってから再試行してください。トンネルの接続状態は維持しました。"
+  "repair.udpExisting": "判定不能：PF にトンネル、DNS、DHCP の例外に該当しない UDP 接続があるか、その接続先を確認できません。該当するアプリを終了し、接続状態が期限切れになってから再試行してください。トンネルの接続状態は維持しました。",
+  "repair.browser": "ブラウザー",
+  "repair.browserHarden": "ブラウザーを保護",
+  "repair.browserRestart": "対象のブラウザーを再起動してポリシーを読み込んでください。その後、新しいスキャンで検査ページを開いて確認します。ポリシーの適用だけでは保護の有効性は確認できません。",
+  "repair.browserVerify": "ブラウザー検査を開いて再スキャン",
+  "repair.browserSkipped": "未インストールのためスキップ：",
+  "repair.browserAbsent": "対応するブラウザーが見つかりません。Chrome、Edge、Chromium、Brave、Firefox をスキップしました。",
+  "repair.browserBefore": "現在のポリシー状態（存在しない場合も含む）を正確にバックアップします。表示されたキーのみ変更し、他のポリシーは保持します。"
 }

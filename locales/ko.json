@@ -302,5 +302,12 @@
   "repair.udpPort": "터널 서버 UDP 포트",
   "repair.udpResolver": "터널 DNS IP",
   "repair.udpRestoreFirst": "터널 예외나 물리 어댑터를 변경하기 전에 현재 AIEnv UDP 정책을 복원하세요.",
-  "repair.udpExisting": "판단 불가: PF에 터널, DNS 또는 DHCP 예외에 해당하지 않는 UDP 연결이 있거나 연결 대상을 확인할 수 없습니다. 해당 앱을 종료하고 연결 상태가 만료된 후 다시 시도하세요. 터널 연결 상태는 유지했습니다."
+  "repair.udpExisting": "판단 불가: PF에 터널, DNS 또는 DHCP 예외에 해당하지 않는 UDP 연결이 있거나 연결 대상을 확인할 수 없습니다. 해당 앱을 종료하고 연결 상태가 만료된 후 다시 시도하세요. 터널 연결 상태는 유지했습니다.",
+  "repair.browser": "브라우저",
+  "repair.browserHarden": "브라우저 보호 설정",
+  "repair.browserRestart": "정책을 적용하려면 해당 브라우저를 다시 시작하세요. 그런 다음 새 검사로 브라우저 확인 페이지를 열어 검증하세요. 정책 적용만으로 보호 여부를 확인할 수는 없습니다.",
+  "repair.browserVerify": "브라우저 확인 페이지 열고 재검사",
+  "repair.browserSkipped": "설치되지 않아 건너뜀:",
+  "repair.browserAbsent": "지원하는 브라우저 설치를 찾지 못했습니다. Chrome, Edge, Chromium, Brave, Firefox를 건너뛰었습니다.",
+  "repair.browserBefore": "현재 정책 상태를 파일이나 값이 없는 경우까지 정확하게 백업합니다. 표시된 정책 키만 변경하고 관련 없는 정책은 유지합니다."
 }

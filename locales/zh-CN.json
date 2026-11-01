@@ -302,5 +302,12 @@
   "repair.udpPort": "隧道服务器 UDP 端口",
   "repair.udpResolver": "隧道 DNS 的 IP",
   "repair.udpRestoreFirst": "更改隧道例外或物理网卡前，请先还原当前的 AIEnv UDP 策略。",
-  "repair.udpExisting": "无法确定：PF 存在不属于隧道、DNS 或 DHCP 例外的 UDP 连接，或无法验证其目标。请关闭相关应用，等待连接状态过期后重试。已保留隧道连接状态。"
+  "repair.udpExisting": "无法确定：PF 存在不属于隧道、DNS 或 DHCP 例外的 UDP 连接，或无法验证其目标。请关闭相关应用，等待连接状态过期后重试。已保留隧道连接状态。",
+  "repair.browser": "浏览器",
+  "repair.browserHarden": "加固浏览器",
+  "repair.browserRestart": "请重启受影响的浏览器以加载策略，然后重新打开检测页并开始新扫描。仅应用策略并不能证明防护已生效。",
+  "repair.browserVerify": "重新打开浏览器检测并扫描",
+  "repair.browserSkipped": "未安装，已跳过：",
+  "repair.browserAbsent": "未检测到支持的浏览器安装。已跳过 Chrome、Edge、Chromium、Brave 和 Firefox。",
+  "repair.browserBefore": "将精确备份当前策略状态（包括不存在的情况）。仅修改所列策略键，保留无关策略。"
 }

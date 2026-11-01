@@ -62,3 +62,38 @@ applicable OS, command generation and cleanup, sealed backups and both restore
 paths. The settings writer is injectable: locale and sysctl drop-in writes are
 exercised in temporary directories. Native command behavior and interactive
 privilege prompts still require OS smoke testing on actual machines.
+
+Browser enterprise policies use the same preview, confirmation, stale-state check,
+backup, elevated adapter, rollback and restore history as other fixes. The Browser
+controls on WebRTC, fingerprint and locale cards and **Harden browsers** apply the
+four browser measures together. Preset languages supply the language list;
+ApplicationLocaleValue is written only on Windows. Existing WebRtcLocalIpsAllowedUrls
+and other unrelated policies remain intact. Firefox preferences are locked.
+
+Detection covers standard Chrome, Edge, Chromium, Brave and Firefox installs.
+Linux targets include the system policy file and detected Firefox distribution
+folders under `/usr/lib/firefox`, `/usr/lib/firefox-esr`, `/usr/lib64/firefox`, and
+`/opt/firefox`; macOS uses `/Applications` bundles and managed preferences;
+Windows uses machine policy registry keys and both Program Files Firefox
+locations. Portable, Snap/Flatpak and custom install locations are not inferred.
+Missing browsers are listed in the preview (or an explicit message if none exist).
+
+Files are backed up as raw bytes, including binary plists, or recorded as absent.
+Registry snapshots retain keys, names, types and values, including absence;
+updates change only differing values and retain unrelated keys and ACLs. Restore
+reinstates the previous bytes/values and deletes resources that were absent.
+New Unix policy files are readable (0644); existing file permissions are retained.
+Backups remain private and policy previews show only the intended policy keys.
+
+Restart affected browsers after applying or restoring. The offered browser check
+starts a fresh scan and opens a new authenticated check page; policy application
+alone never changes a check result to Pass. Browser support and effective policy
+loading still need verification on actual browser/OS combinations. Tests only
+mutate fake adapters and temporary files, never real browser policy locations.
+
+The requested `WebRtcIPHandlingPolicy` key is retained, with the documented
+`WebRtcIPHandling` key for Chrome/Chromium/Brave and `WebRtcLocalhostIpHandling`
+for Edge also set to `disable_non_proxied_udp`. These vendor keys are included
+in the preview and backup/restore scope. References:
+[Chromium policy definition](https://chromium.googlesource.com/chromium/src/+/376fc41e87a058f7a7b300b0ec3a4982b4ec0960/components/policy/resources/templates/policy_definitions/Miscellaneous/WebRtcIPHandling.yaml),
+[Edge policy reference](https://learn.microsoft.com/en-us/deployedge/microsoft-edge-policies/WebRtcLocalhostIpHandling).

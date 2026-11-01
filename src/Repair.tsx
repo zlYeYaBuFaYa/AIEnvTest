@@ -5,7 +5,7 @@ import { useI18n } from "@/lib/i18n";
 import type { ScanReport } from "@/lib/types";
 type TunnelException = { endpoint: string; port: number; resolver: string };
 type Resource = { kind: string; value?: string };
-type Plan = { id: string; check_id: string; requires_admin: boolean; guidance: {type: "location_settings"} | null; preview: {resource: Resource; before: string; after: string}[] };
+type Plan = { skipped: string[]; id: string; check_id: string; requires_admin: boolean; guidance: {type: "location_settings"} | null; preview: {resource: Resource; before: string; after: string}[] };
 type Backup = { id: string; created_at: string; check_id: string; scope: Resource[]; integrity: boolean };
 type Update = { transactions: {success: boolean; steps: {index: number; status: string; error: string | null}[]}[]; report: ScanReport | null; scan_error: string | null };
 export function useRepair(report: ScanReport | null, setReport: (r: ScanReport) => void, setError: (s: string) => void, scanning: boolean) {
@@ -21,12 +21,13 @@ export function useRepair(report: ScanReport | null, setReport: (r: ScanReport) 
   const [udpEndpoint, setUdpEndpoint] = useState("");
   const [udpPort, setUdpPort] = useState("51820");
   const [udpResolver, setUdpResolver] = useState("");
+  const [browserVerify, setBrowserVerify] = useState(false);
   const [notice, setNotice] = useState("");
   const blocked = busy || scanning;
   async function reload() {
     setAvailable([]);
     setBackups(await invoke<Backup[]>("list_backups"));
-    setAvailable(["hosts", ...(report ? ["timezone", "clock", "locale", "dns_configured", "exit_ipv6", "system_proxy", "udp_quic", ...(report.os === "windows" ? ["location"] : [])] : [])]);
+    setAvailable(["hosts", ...(report ? ["browser", "timezone", "clock", "locale", "dns_configured", "exit_ipv6", "system_proxy", "udp_quic", ...(report.os === "windows" ? ["location"] : [])] : [])]);
   }
   useEffect(() => { void reload().catch(e => setError(String(e))); }, [report]);
   async function perform(work: () => Promise<void>) {
@@ -52,6 +53,7 @@ export function useRepair(report: ScanReport | null, setReport: (r: ScanReport) 
         else updates.push(await invoke<Update>("apply_plan", {planId: plan.id}));
       }
       else updates.push(await invoke<Update>(action.all ? "restore_all" : "restore", {backupId: action.backupId}));
+      if (action.plans?.some(p => p.check_id === "browser") || action.backupId && backups.find(b => b.id === action.backupId)?.check_id === "browser" || action.all) setBrowserVerify(true);
       for (const update of updates) {
         if (update.report) setReport(update.report);
         if (update.scan_error) setError(update.scan_error);
@@ -60,16 +62,19 @@ export function useRepair(report: ScanReport | null, setReport: (r: ScanReport) 
       }
     });
   }
-  const actions = (checkId: string) => {
+  const buttons = (checkId: string) => {
     const latest = backups.find(b => b.check_id === checkId && b.integrity);
     return <div className="mt-3 flex flex-wrap gap-2">
       <Button size="sm" variant="outline" disabled={blocked || (checkId !== "location" && !available.includes(checkId))} onClick={() => void preview(checkId)}>{t(checkId === "location" && report?.os !== "windows" ? "repair.openSettings" : "repair.fix")}</Button>
-      <Button size="sm" variant="outline" disabled={blocked || !["hosts", "timezone", "clock", "locale", "dns_configured", "exit_ipv6", "system_proxy", "udp_quic", ...(report?.os === "windows" ? ["location"] : [])].includes(checkId)} onClick={() => void perform(async () => { await invoke("backup", {checkId}); setNotice(t("repair.saved")); })}>{t("repair.backup")}</Button>
+      <Button size="sm" variant="outline" disabled={blocked || !["browser", "hosts", "timezone", "clock", "locale", "dns_configured", "exit_ipv6", "system_proxy", "udp_quic", ...(report?.os === "windows" ? ["location"] : [])].includes(checkId)} onClick={() => void perform(async () => { await invoke("backup", {checkId}); setNotice(t("repair.saved")); })}>{t("repair.backup")}</Button>
       <Button size="sm" variant="outline" disabled={blocked || !latest} onClick={() => setModal({backupId: latest?.id})}>{t("repair.restore")}</Button>
     </div>;
   };
+  const actions = (checkId: string) => <>{!["webrtc", "fingerprint"].includes(checkId) && buttons(checkId)}{["webrtc", "fingerprint", "locale"].includes(checkId) && <div className="mt-3 border-t border-line pt-3"><p className="text-sm font-semibold">{t("repair.browser")}</p>{buttons("browser")}</div>}</>;
   const sidebar = <div className="mt-4 space-y-2 border-t border-line pt-4">
     <Button size="sm" disabled={blocked} onClick={() => void preview()}>{t("repair.all")}</Button>
+    <Button size="sm" variant="outline" disabled={blocked || !report} onClick={() => void preview("browser")}>{t("repair.browserHarden")}</Button>
+    {browserVerify && <div className="text-sm text-muted"><p>{t("repair.browserRestart")}</p><Button size="sm" variant="outline" disabled={blocked || !report} onClick={() => void perform(async () => {const next = await invoke<ScanReport>("run_scan", {regionId: report?.regionId}); setReport(next);})}>{t("repair.browserVerify")}</Button></div>}
     {busy && <p role="status" className="text-sm text-teal">{t("repair.working")}</p>}
     {notice && <p role="status" className="text-sm text-muted">{notice}</p>}
   </div>;
@@ -84,7 +89,7 @@ export function useRepair(report: ScanReport | null, setReport: (r: ScanReport) 
         <Button disabled={blocked || !backups.length} onClick={() => setModal({all: true})}>{t("repair.restoreAll")}</Button>
         {!backups.length && <p className="mt-6 text-muted">{t("repair.empty")}</p>}
         {backups.map(b => <article key={b.id} className="mt-4 rounded-2xl border border-line bg-paper p-4">
-          <p className="font-semibold">{b.check_id ? t(`check.${b.check_id}.title`) : t("repair.invalid")}</p>
+          <p className="font-semibold">{b.check_id === "browser" ? t("repair.browser") : b.check_id ? t(`check.${b.check_id}.title`) : t("repair.invalid")}</p>
           <p className="mt-1 text-sm text-muted">{b.created_at ? new Date(b.created_at).toLocaleString() : "—"}</p>
           <p className="my-2 break-all text-sm">{b.scope.map(r => r.value ?? r.kind).join(", ")}</p>
           <p className={b.integrity ? "text-teal" : "text-status-fail-ink"}>{t(b.integrity ? "repair.verified" : "repair.invalid")}</p>
@@ -94,12 +99,13 @@ export function useRepair(report: ScanReport | null, setReport: (r: ScanReport) 
     {modal && <Confirmation title={t(modal.plans ? "repair.preview" : modal.all ? "repair.restoreAll" : "repair.restore")} close={() => setModal(null)} confirm={() => void confirm()} guidance={modal.plans?.every(p => !!p.guidance)}>
       <p className="mb-4 text-sm text-muted">{t(modal.plans?.every(p => !!p.guidance) ? "repair.guidance" : modal.plans ? "repair.confirmFix" : modal.all ? "repair.home" : "repair.confirmRestore")}</p>
       {modal.plans?.map(plan => <div key={plan.id} className="space-y-3">
+        {plan.check_id === "browser" && <><p className="text-sm text-muted">{t("repair.browserRestart")}</p>{plan.skipped.length > 0 && <p className="text-sm text-muted">{t("repair.browserSkipped")} {plan.skipped.join(", ")}</p>}</>}
         {plan.check_id === "locale" && <p className="text-sm text-muted">{t("repair.logoutNote")}</p>}
         {plan.check_id === "clock" && <p className="text-sm text-muted">{t("repair.ntpNote")}</p>}
         {plan.requires_admin && <span className="inline-block rounded-full bg-notice-risk-bg px-3 py-1 text-xs text-notice-risk-ink">{t("repair.admin")}</span>}
         {plan.preview.map((change, i) => <div key={i} className="rounded-2xl border border-line bg-paper p-3">
           <p className="mb-2 break-all font-mono text-sm">{change.resource.value ?? change.resource.kind}</p>
-          <div className="grid gap-3 sm:grid-cols-2"><div><p className="text-xs text-muted">{t("repair.before")}</p><pre className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap break-all text-xs">{change.before}</pre></div><div><p className="text-xs text-teal">→ {t("repair.after")}</p><pre className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap break-all text-xs">{change.after}</pre></div></div>
+          <div className="grid gap-3 sm:grid-cols-2"><div><p className="text-xs text-muted">{t("repair.before")}</p><pre className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap break-all text-xs">{plan.check_id === "browser" ? t("repair.browserBefore") : change.before}</pre></div><div><p className="text-xs text-teal">→ {t("repair.after")}</p><pre className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap break-all text-xs">{change.after}</pre></div></div>
         </div>)}
       </div>)}
     </Confirmation>}

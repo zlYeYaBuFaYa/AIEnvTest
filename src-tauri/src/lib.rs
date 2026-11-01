@@ -1,3 +1,4 @@
+mod browser_fixes;
 mod transaction;
 mod system_fixes;
 mod system_settings;

@@ -6,18 +6,19 @@ fn engine(app:&tauri::AppHandle)->Result<Engine<OsAdapter>,String> {
     Ok(Engine{adapter:OsAdapter{dir:dir.clone()},dir,locks:app.state::<AppState>().locks.clone(),allowed:allowlist()})
 }
 #[derive(Serialize)]
-pub struct PlanView { id:String, check_id:String, requires_admin:bool, preview:Vec<ChangePreview>, guidance:Option<crate::system_fixes::GuidancePlan> }
+pub struct PlanView { id:String, check_id:String, requires_admin:bool, preview:Vec<ChangePreview>, skipped:Vec<String>, guidance:Option<crate::system_fixes::GuidancePlan> }
 fn remember(app:&tauri::AppHandle,plan:FixPlan)->Result<PlanView,String> {
-    let view=PlanView{guidance:None,id:plan.id.clone(),check_id:plan.check_id.clone(),requires_admin:plan.requires_admin,preview:plan.preview.iter().map(|p|ChangePreview{resource:p.resource.clone(),before:crate::redact::redact_text(&p.before),after:crate::redact::redact_text(&p.after)}).collect()};
+    let view=PlanView{skipped:if plan.check_id=="browser" {let os=crate::system_fixes::Os::current();[crate::browser_fixes::Target::Chrome,crate::browser_fixes::Target::Edge,crate::browser_fixes::Target::Chromium,crate::browser_fixes::Target::Brave,crate::browser_fixes::Target::Firefox].into_iter().filter(|t|!crate::browser_fixes::Target::ALL.into_iter().any(|candidate|candidate.name()==t.name() && crate::browser_fixes::installed(os,candidate,|p|std::path::Path::new(p).is_file()))).map(|t|t.name().to_owned()).collect()}else{vec![]},guidance:None,id:plan.id.clone(),check_id:plan.check_id.clone(),requires_admin:plan.requires_admin,preview:plan.preview.iter().map(|p|ChangePreview{resource:p.resource.clone(),before:if matches!(p.resource,ResourceId::Browser(_)){"".into()}else{crate::redact::redact_text(&p.before)},after:crate::redact::redact_text(&p.after)}).collect()};
     let state=app.state::<AppState>();let mut plans=state.plans.lock().map_err(|e|e.to_string())?;
     if plans.len() >= 128 { if let Some(key)=plans.keys().next().cloned() {plans.remove(&key);} }
     plans.insert(plan.id.clone(),plan);Ok(view)
 }
 #[tauri::command]
 pub fn plan_fix(app:tauri::AppHandle,check_id:String,udp:Option<serde_json::Value>)->Result<Option<PlanView>,String> {
-    if check_id=="location" && !cfg!(windows) {return Ok(Some(PlanView{id:"location-settings".into(),check_id,requires_admin:false,preview:vec![],guidance:Some(crate::system_fixes::GuidancePlan::LocationSettings)}))}
+    if check_id=="location" && !cfg!(windows) {return Ok(Some(PlanView{skipped:vec![],id:"location-settings".into(),check_id,requires_admin:false,preview:vec![],guidance:Some(crate::system_fixes::GuidancePlan::LocationSettings)}))}
     let adapter=engine(&app)?.adapter;
     let plan=match check_id.as_str() {
+        "browser"=>{let region=app.state::<AppState>().region.lock().map_err(|e|e.to_string())?.clone().ok_or("repair.scanRequired")?;let os=crate::system_fixes::Os::current();let targets=crate::browser_fixes::detected(os);if targets.is_empty(){return Err("repair.browserAbsent".into())}crate::browser_fixes::plan(&adapter,os,&targets,&crate::region::find(&region).ok_or("repair.scanRequired")?.languages)?},
         "hosts"=>hosts_plan(&adapter)?,
         "clock"=>crate::system_fixes::ntp_plan(&adapter)?,
         "timezone"=>{
@@ -71,7 +72,8 @@ pub async fn apply_plan(app:tauri::AppHandle,plan_id:String)->Result<Update,Stri
 }
 #[tauri::command]
 pub async fn backup(app:tauri::AppHandle,check_id:String)->Result<BackupSummary,String> {
-    let mut resources=match check_id.as_str() {"hosts"=>vec![ResourceId::File(hosts_path())],"timezone"=>vec![ResourceId::Timezone],"clock"=>vec![ResourceId::Ntp],"udp_quic"=>vec![ResourceId::Udp],id if crate::system_settings::setting_for_check(id).is_some()=>vec![ResourceId::Setting(crate::system_settings::setting_for_check(id).unwrap())],_=>return Err("No resources registered for this check".into())};
+    let mut resources=match check_id.as_str() {"browser"=>crate::browser_fixes::detected(crate::system_fixes::Os::current()).into_iter().map(ResourceId::Browser).collect(),"hosts"=>vec![ResourceId::File(hosts_path())],"timezone"=>vec![ResourceId::Timezone],"clock"=>vec![ResourceId::Ntp],"udp_quic"=>vec![ResourceId::Udp],id if crate::system_settings::setting_for_check(id).is_some()=>vec![ResourceId::Setting(crate::system_settings::setting_for_check(id).unwrap())],_=>return Err("No resources registered for this check".into())};
+    if check_id=="browser" && resources.is_empty(){return Err("repair.browserAbsent".into())}
     if cfg!(windows)&&check_id=="location"&&crate::system_settings::elevated()?{resources.push(ResourceId::Setting(crate::system_settings::Setting::LocationMachine));}
     let engine=engine(&app)?;let b=tauri::async_runtime::spawn_blocking(move||engine.backup(&check_id,&resources)).await.map_err(|e|e.to_string())??;
     Ok(BackupSummary{id:b.id,created_at:b.created_at,check_id:b.check_id,scope:b.scope,integrity:true})

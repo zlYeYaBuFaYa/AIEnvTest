@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeSet, fs, path::{Path, PathBuf}, process::Command};
 type Result<T> = std::result::Result<T,String>;
-pub fn allowlist() -> BTreeSet<ResourceId> { [ResourceId::File(hosts_path()), ResourceId::Timezone, ResourceId::Ntp, ResourceId::Udp].into_iter().chain(crate::system_settings::Setting::ALL.into_iter().map(ResourceId::Setting)).collect() }
+pub fn allowlist() -> BTreeSet<ResourceId> { [ResourceId::File(hosts_path()), ResourceId::Timezone, ResourceId::Ntp, ResourceId::Udp].into_iter().chain(crate::browser_fixes::Target::ALL.into_iter().map(ResourceId::Browser)).chain(crate::system_settings::Setting::ALL.into_iter().map(ResourceId::Setting)).collect() }
 #[derive(Serialize,Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Request { version:u32, plan:FixPlan, before:Vec<BackupEntry>, #[serde(default)] read_only:bool }
@@ -15,6 +15,7 @@ struct Response { digest:String, result:Result<Vec<StepStatus>>, #[serde(default
 pub struct OsAdapter { pub dir:PathBuf }
 struct LocalAdapter;
 fn read_file(resource:&ResourceId)->Result<PreviousValue> {
+    if let ResourceId::Browser(target)=resource {return crate::browser_fixes::read(*target)}
     if resource==&ResourceId::Udp{return crate::udp_fix::read()}
     if let ResourceId::Setting(setting)=resource {return crate::system_settings::read(*setting)}
     if resource == &ResourceId::Ntp { return crate::system_fixes::read_ntp(); }
@@ -27,6 +28,7 @@ impl SystemAdapter for LocalAdapter {
     fn read(&self,r:&ResourceId)->Result<PreviousValue>{read_file(r)}
     fn write(&self,r:&ResourceId,v:&PreviousValue)->Result<()> {
         if !allowlist().contains(r){return Err("Write outside allowlist".into())}
+        if let ResourceId::Browser(target)=r {return crate::browser_fixes::write(*target,v)}
         if r==&ResourceId::Udp{return crate::udp_fix::write(v)}
         if let ResourceId::Setting(setting)=r {return crate::system_settings::write(*setting,v)}
         if r == &ResourceId::Ntp { return crate::system_fixes::write_ntp(v); }

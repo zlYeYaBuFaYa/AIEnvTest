@@ -5,10 +5,11 @@ use std::{collections::BTreeSet, fs::{self, OpenOptions}, io::Write, path::{Path
 type Result<T> = std::result::Result<T, String>;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(tag="kind", content="value", deny_unknown_fields)]
-pub enum ResourceId { File(PathBuf), Registry(String), Timezone, Ntp, Udp, Setting(crate::system_settings::Setting), Dns(String) }
+pub enum ResourceId { Browser(crate::browser_fixes::Target), File(PathBuf), Registry(String), Timezone, Ntp, Udp, Setting(crate::system_settings::Setting), Dns(String) }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag="type", deny_unknown_fields)]
 pub enum FixStep {
+    SetBrowser { target: crate::browser_fixes::Target, value: PreviousValue },
     WriteFile { path: PathBuf, contents: String },
     RemoveFile { path: PathBuf },
     SetRegistry { key: String, name: String, value: String },
@@ -20,6 +21,7 @@ pub enum FixStep {
     SetDns { iface: String, servers: Vec<String> },
 }
 impl FixStep { pub(crate) fn resource(&self) -> Result<ResourceId> { match self {
+    Self::SetBrowser{target,..} => Ok(ResourceId::Browser(*target)),
     Self::WriteFile{path,..}|Self::RemoveFile{path} => Ok(ResourceId::File(path.clone())),
     Self::SetSetting{setting,value} => {crate::system_settings::validate_value(*setting,value)?; Ok(ResourceId::Setting(*setting))},
     Self::SetUdp{value} => {crate::udp_fix::validate(value)?;Ok(ResourceId::Udp)},
@@ -86,7 +88,7 @@ pub trait SystemAdapter: Send + Sync {
     /// One privileged batch, including rollback, per transaction.
     fn batch(&self, plan: &FixPlan, before: &[BackupEntry]) -> Result<Vec<StepStatus>> { Ok(apply_steps(self,plan,before)) }
 }
-fn value(step: &FixStep) -> Result<PreviousValue> { match step { FixStep::SetUdp{value}=>Ok(PreviousValue::Text(value.clone())), FixStep::SetSetting{value,..}=>Ok(PreviousValue::Text(value.clone())), FixStep::WriteFile{contents,..}=>Ok(PreviousValue::Text(contents.clone())), FixStep::RemoveFile{..}=>Ok(PreviousValue::Absent), FixStep::SetTimezone{zone}=>Ok(PreviousValue::Text(zone.clone())), FixStep::SetNtp{enabled}=>Ok(PreviousValue::Text(enabled.to_string())), _=>Err("Unsupported step".into()) } }
+fn value(step: &FixStep) -> Result<PreviousValue> { match step { FixStep::SetBrowser{value,..}=>Ok(value.clone()), FixStep::SetUdp{value}=>Ok(PreviousValue::Text(value.clone())), FixStep::SetSetting{value,..}=>Ok(PreviousValue::Text(value.clone())), FixStep::WriteFile{contents,..}=>Ok(PreviousValue::Text(contents.clone())), FixStep::RemoveFile{..}=>Ok(PreviousValue::Absent), FixStep::SetTimezone{zone}=>Ok(PreviousValue::Text(zone.clone())), FixStep::SetNtp{enabled}=>Ok(PreviousValue::Text(enabled.to_string())), _=>Err("Unsupported step".into()) } }
 fn apply_steps<A: SystemAdapter + ?Sized>(adapter: &A, plan: &FixPlan, before: &[BackupEntry]) -> Vec<StepStatus> {
     let mut statuses: Vec<StepStatus> = Vec::new();
     let mut applied = Vec::new();
@@ -185,7 +187,7 @@ impl<A: SystemAdapter> Engine<A> {
         backup.verify()?;
         let resources:BTreeSet<_>=backup.entries.iter().map(|e|e.resource.clone()).collect();
         if resources!=backup.scope.iter().cloned().collect() || resources.len()!=backup.entries.len() { return Err("Invalid backup scope".into()); }
-        let steps=backup.entries.iter().map(|e|match (&e.resource,&e.previous_value) { (ResourceId::Udp,PreviousValue::Text(value))=>Ok(FixStep::SetUdp{value:value.clone()}), (ResourceId::Setting(setting),PreviousValue::Text(value))=>Ok(FixStep::SetSetting{setting:*setting,value:value.clone()}), (ResourceId::File(path),PreviousValue::Text(contents))=>Ok(FixStep::WriteFile{path:path.clone(),contents:contents.clone()}), (ResourceId::File(path),PreviousValue::Absent)=>Ok(FixStep::RemoveFile{path:path.clone()}), (ResourceId::Timezone,PreviousValue::Text(zone))=>Ok(FixStep::SetTimezone{zone:zone.clone()}), (ResourceId::Ntp,PreviousValue::Text(state)) if matches!(state.as_str(),"true"|"false")=>Ok(FixStep::SetNtp{enabled:state=="true"}), _=>Err("Unsupported backup resource".into()) }).collect::<Result<Vec<_>>>()?;
+        let steps=backup.entries.iter().map(|e|match (&e.resource,&e.previous_value) { (ResourceId::Browser(target),value)=>Ok(FixStep::SetBrowser{target:*target,value:value.clone()}), (ResourceId::Udp,PreviousValue::Text(value))=>Ok(FixStep::SetUdp{value:value.clone()}), (ResourceId::Setting(setting),PreviousValue::Text(value))=>Ok(FixStep::SetSetting{setting:*setting,value:value.clone()}), (ResourceId::File(path),PreviousValue::Text(contents))=>Ok(FixStep::WriteFile{path:path.clone(),contents:contents.clone()}), (ResourceId::File(path),PreviousValue::Absent)=>Ok(FixStep::RemoveFile{path:path.clone()}), (ResourceId::Timezone,PreviousValue::Text(zone))=>Ok(FixStep::SetTimezone{zone:zone.clone()}), (ResourceId::Ntp,PreviousValue::Text(state)) if matches!(state.as_str(),"true"|"false")=>Ok(FixStep::SetNtp{enabled:state=="true"}), _=>Err("Unsupported backup resource".into()) }).collect::<Result<Vec<_>>>()?;
         let plan=FixPlan{id:id(),check_id:backup.check_id.clone(),steps,resources:backup.scope.clone(),requires_admin:backup.scope.iter().any(crate::system_settings::requires_admin),preview:vec![]}; validate(&plan,&self.allowed)?;
         let before=self.snapshot(&backup.check_id,&backup.scope)?;
         // Recovery journal for a failed restore, excluded from normal history/restore_all.
@@ -209,6 +211,7 @@ impl<A: SystemAdapter> Engine<A> {
             }
             for entry in &backup.entries {
                 steps.push(match (&entry.resource, &entry.previous_value) {
+                    (ResourceId::Browser(target),value)=>FixStep::SetBrowser{target:*target,value:value.clone()},
                     (ResourceId::Udp, PreviousValue::Text(value)) => FixStep::SetUdp{value:value.clone()},
                     (ResourceId::Setting(setting), PreviousValue::Text(value)) => FixStep::SetSetting{setting:*setting,value:value.clone()},
                     (ResourceId::File(path), PreviousValue::Text(contents)) => FixStep::WriteFile {path:path.clone(), contents:contents.clone()},

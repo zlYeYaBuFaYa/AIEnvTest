@@ -302,5 +302,12 @@
   "repair.udpPort": "Tunnel server UDP port",
   "repair.udpResolver": "Tunnel resolver IP",
   "repair.udpRestoreFirst": "Restore the current AIEnv UDP policy before changing its tunnel exceptions or physical adapters.",
-  "repair.udpExisting": "Inconclusive: PF has existing UDP states outside the tunnel, resolver or DHCP exceptions, or their destinations could not be verified. Close the affected applications, let their states expire, then retry. Tunnel states were preserved."
+  "repair.udpExisting": "Inconclusive: PF has existing UDP states outside the tunnel, resolver or DHCP exceptions, or their destinations could not be verified. Close the affected applications, let their states expire, then retry. Tunnel states were preserved.",
+  "repair.browser": "Browser",
+  "repair.browserHarden": "Harden browsers",
+  "repair.browserRestart": "Restart the affected browsers to load the policies. Then re-open the check page with a fresh scan to verify; applying policies alone does not prove protection.",
+  "repair.browserVerify": "Re-open browser check and scan",
+  "repair.browserSkipped": "Not installed; skipped:",
+  "repair.browserAbsent": "No supported browser installation was detected. Chrome, Edge, Chromium, Brave and Firefox were skipped.",
+  "repair.browserBefore": "The exact current policy state (including absence) will be backed up. Only the listed policy keys will change; unrelated policies are preserved."
 }
