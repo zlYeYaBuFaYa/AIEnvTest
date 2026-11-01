@@ -217,5 +217,9 @@
   "reach.partial": "일부 Claude 엔드포인트만 응답했습니다. {detail}",
   "reach.fail": "claude.ai와 api.anthropic.com 모두 응답하지 않았습니다. {detail}",
   "advice.reach.ok": "연결성은 바꿀 필요가 없습니다.",
-  "advice.reach.fix": "터널이나 방화벽이 이 호스트를 막고 있습니다. 브라우저 세션 전에 먼저 연결되어야 합니다."
+  "advice.reach.fix": "터널이나 방화벽이 이 호스트를 막고 있습니다. 브라우저 세션 전에 먼저 연결되어야 합니다.",
+  "theme.label": "테마",
+  "theme.light": "라이트",
+  "theme.dark": "다크",
+  "theme.system": "시스템 설정 따르기"
 }

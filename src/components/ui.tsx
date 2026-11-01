@@ -8,9 +8,9 @@ const buttonVariants = cva(
   {
     variants: {
       variant: {
-        default: "bg-teal text-white hover:bg-teal-ink",
+        default: "bg-teal text-on-teal hover:bg-teal-ink",
         outline: "border border-line bg-card text-ink hover:bg-paper",
-        ghost: "text-ink hover:bg-black/5",
+        ghost: "text-ink hover:bg-hover",
       },
       size: {
         default: "h-11 px-5",
@@ -31,11 +31,11 @@ export function Button({
 }
 
 const badgeTone: Record<Status, string> = {
-  pass: "bg-emerald-50 text-emerald-800 ring-emerald-200",
-  warn: "bg-amber-50 text-amber-900 ring-amber-200",
-  fail: "bg-red-50 text-red-800 ring-red-200",
-  info: "bg-stone-100 text-stone-700 ring-stone-200",
-  inconclusive: "bg-stone-100 text-stone-700 ring-stone-200",
+  pass: "bg-status-pass-bg text-status-pass-ink ring-status-pass-border/30",
+  warn: "bg-status-warn-bg text-status-warn-ink ring-status-warn-border/30",
+  fail: "bg-status-fail-bg text-status-fail-ink ring-status-fail-border/30",
+  info: "bg-status-neutral-bg text-status-neutral-ink ring-status-neutral-border/30",
+  inconclusive: "bg-status-neutral-bg text-status-neutral-ink ring-status-neutral-border/30",
 };
 
 export function StatusBadge({ status, label }: { status: Status; label: string }) {

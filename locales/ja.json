@@ -217,5 +217,9 @@
   "reach.partial": "一部の Claude エンドポイントだけが応答しました。{detail}",
   "reach.fail": "claude.ai も api.anthropic.com も応答しませんでした。{detail}",
   "advice.reach.ok": "到達性については変更不要です。",
-  "advice.reach.fix": "トンネルまたはファイアウォールがこれらのホストを遮っています。ブラウザセッションの前に到達できる必要があります。"
+  "advice.reach.fix": "トンネルまたはファイアウォールがこれらのホストを遮っています。ブラウザセッションの前に到達できる必要があります。",
+  "theme.label": "テーマ",
+  "theme.light": "ライト",
+  "theme.dark": "ダーク",
+  "theme.system": "システムに合わせる"
 }

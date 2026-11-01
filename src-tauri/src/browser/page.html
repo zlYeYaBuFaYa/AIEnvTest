@@ -3,10 +3,15 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="light dark">
   <title>AIEnv browser check</title>
   <style>
     :root {
-      color-scheme: light;
+      color-scheme: light dark;
+      --page-top: #f7f3ec;
+      --page-bottom: #efe6d8;
+      --amber-border: #ead7b0;
+      --teal-border: #c9e4e0;
       --paper: #f4efe6;
       --card: #fffdf8;
       --ink: #1f1a14;
@@ -17,10 +22,27 @@
       --amber: #8a5a12;
       --amber-soft: #fbf3e4;
     }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --paper: #15130f;
+        --card: #1e1b17;
+        --ink: #ece6dc;
+        --muted: #a59b8e;
+        --line: #34302a;
+        --teal: #9cddd0;
+        --teal-soft: #182d29;
+        --teal-border: #30564e;
+        --amber: #e9c182;
+        --amber-soft: #302718;
+        --amber-border: #5c492c;
+        --page-top: #1b1813;
+        --page-bottom: #12110e;
+      }
+    }
     * { box-sizing: border-box; }
     body {
       margin: 0;
-      background: linear-gradient(180deg, #f7f3ec 0%, #efe6d8 100%);
+      background: linear-gradient(180deg, var(--page-top) 0%, var(--page-bottom) 100%);
       color: var(--ink);
       font: 16px/1.5 "Segoe UI", "Noto Sans CJK SC", "WenQuanYi Micro Hei", sans-serif;
     }
@@ -32,9 +54,9 @@
     .notices { display: grid; gap: 10px; margin: 22px 0; }
     .notice { border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; background: var(--card); }
     .notice strong { display: block; margin-bottom: 2px; }
-    .notice.risk { background: var(--amber-soft); border-color: #ead7b0; }
+    .notice.risk { background: var(--amber-soft); border-color: var(--amber-border); }
     .notice.risk strong { color: var(--amber); }
-    .notice.info { background: var(--teal-soft); border-color: #c9e4e0; }
+    .notice.info { background: var(--teal-soft); border-color: var(--teal-border); }
     .notice.info strong { color: var(--teal); }
     .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
     .card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 14px 16px; min-height: 108px; }

@@ -217,5 +217,9 @@
   "reach.partial": "只有一部分 Claude 端点有响应。{detail}",
   "reach.fail": "claude.ai 和 api.anthropic.com 都没有响应。{detail}",
   "advice.reach.ok": "可达性不用改。",
-  "advice.reach.fix": "隧道或防火墙拦住了这些主机。浏览器会话之前，得先能连上。"
+  "advice.reach.fix": "隧道或防火墙拦住了这些主机。浏览器会话之前，得先能连上。",
+  "theme.label": "主题",
+  "theme.light": "浅色",
+  "theme.dark": "深色",
+  "theme.system": "跟随系统"
 }

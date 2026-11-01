@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Button, StatusBadge } from "@/components/ui";
+import { useTheme } from "@/lib/theme";
 import { useI18n } from "@/lib/i18n";
 import type { CheckResult, Lang, RegionSummary, ScanReport, Status, Verdict } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -22,6 +23,7 @@ const GROUP_LABEL: Record<string, string> = {
 const STATUSES: Status[] = ["fail", "warn", "inconclusive", "info", "pass"];
 
 export default function App() {
+  const { mode, setMode } = useTheme();
   const { lang, setLang, t } = useI18n();
   const [regions, setRegions] = useState<RegionSummary[]>([]);
   const [regionId, setRegionId] = useState("us");
@@ -86,10 +88,10 @@ export default function App() {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <header className="flex items-end justify-between gap-4 px-6 pb-3 pt-5">
+      <header className="flex flex-wrap items-end justify-between gap-4 px-6 pb-3 pt-5">
         <div>
           <div className="flex items-center gap-3">
-            <span className="grid h-10 w-10 place-items-center rounded-2xl bg-teal text-sm font-semibold tracking-wide text-white">
+            <span className="grid h-10 w-10 place-items-center rounded-2xl bg-teal text-sm font-semibold tracking-wide text-on-teal">
               Ae
             </span>
             <div>
@@ -100,20 +102,33 @@ export default function App() {
             </div>
           </div>
         </div>
-        <div className="flex rounded-full border border-line bg-card p-1" role="group" aria-label={t("lang.label")}>
-          {LANGS.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => setLang(item.id)}
-              className={cn(
-                "rounded-full px-3 py-1.5 text-sm",
-                lang === item.id ? "bg-ink text-white" : "text-muted hover:text-ink",
-              )}
-            >
-              {item.label}
-            </button>
-          ))}
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex rounded-full border border-line bg-card p-1" role="group" aria-label={t("lang.label")}>
+            {LANGS.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => setLang(item.id)}
+                className={cn(
+                  "rounded-full px-3 py-1.5 text-sm",
+                  lang === item.id ? "bg-ink text-on-ink" : "text-muted hover:text-ink",
+                )}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+          <div className="flex rounded-full border border-line bg-card p-1" role="group" aria-label={t("theme.label")}>
+            {(["light", "dark", "system"] as const).map((item) => (
+              <button key={item} type="button" onClick={() => setMode(item)}
+                aria-label={t(`theme.${item}`)} title={t(`theme.${item}`)} aria-pressed={mode === item}
+                className={cn("rounded-full p-2", mode === item ? "bg-ink text-on-ink" : "text-muted hover:bg-hover hover:text-ink")}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  {item === "light" ? <><circle cx="12" cy="12" r="4" /><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5" /></> : item === "dark" ? <path d="M21 13a9 9 0 0 1-10-10 9 9 0 1 0 10 10Z" /> : <><rect x="3" y="4" width="18" height="13" rx="2" /><path d="M8 21h8m-4-4v4" /></>}
+                </svg>
+              </button>
+            ))}
+          </div>
         </div>
       </header>
 
@@ -151,7 +166,7 @@ export default function App() {
       <p className="px-8 pb-3 text-sm text-muted">{t("scan.hint")}</p>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-8">
-        {error && <p className="mb-3 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">{error}</p>}
+        {error && <p className="mb-3 rounded-2xl border border-status-fail-border/40 bg-status-fail-bg px-4 py-3 text-sm text-status-fail-ink">{error}</p>}
         {!report && !scanning && (
           <div className="rounded-3xl border border-dashed border-line bg-card/70 px-6 py-10">
             <h2 className="font-serif text-2xl">{t("empty.title")}</h2>
@@ -221,10 +236,10 @@ function Notice({ tone, title, body }: { tone: "info" | "risk"; title: string; b
     <article
       className={cn(
         "rounded-2xl border px-4 py-3",
-        tone === "info" ? "border-[#c9e4e0] bg-[#e7f4f2]" : "border-[#ead7b0] bg-[#fbf3e4]",
+        tone === "info" ? "border-notice-info-border bg-notice-info-bg" : "border-notice-risk-border bg-notice-risk-bg",
       )}
     >
-      <h2 className={cn("text-sm font-semibold", tone === "info" ? "text-teal-ink" : "text-amber-900")}>{title}</h2>
+      <h2 className={cn("text-sm font-semibold", tone === "info" ? "text-notice-info-ink" : "text-notice-risk-ink")}>{title}</h2>
       <p className="mt-1 text-sm leading-6 text-ink/80">{body}</p>
     </article>
   );
@@ -233,11 +248,11 @@ function Notice({ tone, title, body }: { tone: "info" | "risk"; title: string; b
 function CheckCard({ check }: { check: CheckResult }) {
   const { t } = useI18n();
   const border = {
-    pass: "border-l-emerald-600",
-    warn: "border-l-amber-600",
-    fail: "border-l-red-700",
-    info: "border-l-stone-400",
-    inconclusive: "border-l-stone-500",
+    pass: "border-l-status-pass-border",
+    warn: "border-l-status-warn-border",
+    fail: "border-l-status-fail-border",
+    info: "border-l-status-neutral-border",
+    inconclusive: "border-l-status-neutral-border",
   }[check.status];
   return (
     <details open={check.status === "fail"} className={cn("rounded-2xl border border-line border-l-4 bg-card px-4 py-3", border)}>
@@ -282,8 +297,8 @@ function FieldList({ title, entries }: { title: string; entries: Record<string, 
 }
 
 function verdictColor(verdict: Verdict) {
-  if (verdict === "consistent") return "text-emerald-800";
-  if (verdict === "review") return "text-amber-900";
-  if (verdict === "exposed") return "text-red-800";
-  return "text-stone-700";
+  if (verdict === "consistent") return "text-status-pass-ink";
+  if (verdict === "review") return "text-status-warn-ink";
+  if (verdict === "exposed") return "text-status-fail-ink";
+  return "text-status-neutral-ink";
 }

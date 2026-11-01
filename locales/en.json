@@ -217,5 +217,9 @@
   "reach.partial": "Only some Claude endpoints answered. {detail}",
   "reach.fail": "Neither claude.ai nor api.anthropic.com answered. {detail}",
   "advice.reach.ok": "No change suggested for reachability.",
-  "advice.reach.fix": "The tunnel or firewall is blocking these hosts. Reachability has to work before a browser session will."
+  "advice.reach.fix": "The tunnel or firewall is blocking these hosts. Reachability has to work before a browser session will.",
+  "theme.label": "Theme",
+  "theme.light": "Light",
+  "theme.dark": "Dark",
+  "theme.system": "Follow system"
 }
