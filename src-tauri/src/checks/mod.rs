@@ -8,10 +8,18 @@ use crate::model::{params, CheckMeta, CheckResult, Judgement, Status};
 use crate::net::http;
 use crate::platform::parse::{self, IfaceClass};
 use judge::{
-    judge_clock, judge_configured_dns, judge_ecs, judge_exit, judge_fingerprint, judge_hosts, judge_ipv6,
+    judge_clock, judge_configured_dns, judge_ecs, judge_exit, judge_fingerprint, judge_ipv6,
     judge_leak, judge_locale, judge_location, judge_proxy, judge_quic, judge_reach, judge_route, judge_timezone,
     judge_tls, judge_webrtc, DnsServerView, LeakHit, ProxyView, ReachHit, WebRtcIp,
 };
+
+// Only reject missing values for collectors that have usable fallback sources.
+fn collection_failure(platform: &crate::platform::PlatformSnapshot, key: &str, missing: bool) -> Option<Judgement> {
+    if !missing { return None; }
+    let error = platform.errors.get(key)?;
+    Some(Judgement::new(Status::Inconclusive, "collection.unavailable", params(&[]), "advice.collection.retry", params(&[]))
+        .observe("collectionError", error))
+}
 
 pub fn all() -> Vec<Box<dyn EnvironmentCheck>> {
     vec![
@@ -83,19 +91,11 @@ impl EnvironmentCheck for ExitV6 {
         CheckMeta { id: "exit_ipv6", category: "exit" }
     }
     async fn detect(&self, ctx: &ScanContext) -> CheckResult {
-        let iface = ctx.platform.route_v6.clone();
-        let judgement = if iface.is_none() {
-            judge_ipv6(None, None, "", &ctx.region)
-        } else {
-            match ctx.exit_v6().await {
-                Ok(facts) => {
-                    let place = format!("{}, {}, {}", facts.city, facts.region, facts.country);
-                    judge_ipv6(iface.as_deref(), Some(&facts.country), &place, &ctx.region)
-                        .observe("ip", &facts.ip)
-                        .observe("source", &facts.source)
-                }
-                Err(err) => judge_ipv6(iface.as_deref(), None, "", &ctx.region).observe("error", &err),
-            }
+        let route = &ctx.platform.route_v6;
+        let judgement = match ctx.exit_v6().await {
+            Ok(facts) => judge_ipv6(route, Some(&facts.country), &format!("{}, {}, {}", facts.city, facts.region, facts.country), &ctx.region)
+                .observe("ip", &facts.ip).observe("source", &facts.source),
+            Err(err) => judge_ipv6(route, None, "", &ctx.region).observe("error", err),
         };
         finish(&self.meta(), judgement)
     }
@@ -107,6 +107,9 @@ impl EnvironmentCheck for RouteV4 {
         CheckMeta { id: "route_ipv4", category: "routing" }
     }
     async fn detect(&self, ctx: &ScanContext) -> CheckResult {
+        if let Some(judgement) = collection_failure(&ctx.platform, "route_v4", ctx.platform.route_v4_a.is_none() || ctx.platform.route_v4_b.is_none()) {
+            return finish(&self.meta(), judgement);
+        }
         let country = ctx.exit_v4().await.ok().map(|facts| facts.country);
         let judgement = judge_route(
             ctx.platform.route_v4_a.as_deref(),
@@ -124,6 +127,12 @@ impl EnvironmentCheck for UdpQuic {
         CheckMeta { id: "udp_quic", category: "routing" }
     }
     async fn detect(&self, ctx: &ScanContext) -> CheckResult {
+        if let Some(judgement) = collection_failure(&ctx.platform, "route_v4", ctx.platform.route_v4_a.is_none() || ctx.platform.route_v4_b.is_none()) {
+            return finish(&self.meta(), judgement);
+        }
+        if let Some(judgement) = collection_failure(&ctx.platform, "proxy", true) {
+            return finish(&self.meta(), judgement);
+        }
         let iface = ctx.platform.route_v4_a.as_deref().or(ctx.platform.route_v4_b.as_deref());
         finish(&self.meta(), judge_quic(iface, ctx.platform.proxy.enabled))
     }
@@ -135,6 +144,9 @@ impl EnvironmentCheck for SystemProxy {
         CheckMeta { id: "system_proxy", category: "proxy" }
     }
     async fn detect(&self, ctx: &ScanContext) -> CheckResult {
+        if let Some(judgement) = collection_failure(&ctx.platform, "proxy", true) {
+            return finish(&self.meta(), judgement);
+        }
         let fetched = if ctx.platform.proxy.pac && ctx.platform.proxy.pac_url.starts_with("http") {
             http::fetch(&ctx.platform.proxy.pac_url, None, std::time::Duration::from_secs(6))
                 .await
@@ -167,6 +179,9 @@ impl EnvironmentCheck for DnsConfigured {
         CheckMeta { id: "dns_configured", category: "dns" }
     }
     async fn detect(&self, ctx: &ScanContext) -> CheckResult {
+        if let Some(judgement) = collection_failure(&ctx.platform, "dns", ctx.platform.dns_servers.is_empty()) {
+            return finish(&self.meta(), judgement);
+        }
         let mut servers = Vec::new();
         for ip in &ctx.platform.dns_servers {
             let provider = parse::cn_dns_provider(ip).map(|name| name.to_string());
@@ -236,6 +251,9 @@ impl EnvironmentCheck for Timezone {
         CheckMeta { id: "timezone", category: "system" }
     }
     async fn detect(&self, ctx: &ScanContext) -> CheckResult {
+        if let Some(judgement) = collection_failure(&ctx.platform, "timezone", ctx.platform.timezone.trim().is_empty()) {
+            return finish(&self.meta(), judgement);
+        }
         let browser = match ctx.browser().await {
             BrowserState::Ready(payload) if !payload.timezone.is_empty() => Some(payload.timezone),
             _ => None,
@@ -254,6 +272,9 @@ impl EnvironmentCheck for Locale {
         CheckMeta { id: "locale", category: "system" }
     }
     async fn detect(&self, ctx: &ScanContext) -> CheckResult {
+        if let Some(judgement) = collection_failure(&ctx.platform, "locale", ctx.platform.locale.trim().is_empty()) {
+            return finish(&self.meta(), judgement);
+        }
         let (langs, accept, missing) = match ctx.browser().await {
             BrowserState::Ready(payload) => {
                 let missing = payload.languages.is_empty() && payload.accept_language.is_empty();
@@ -275,7 +296,7 @@ impl EnvironmentCheck for WebRtc {
     }
     async fn detect(&self, ctx: &ScanContext) -> CheckResult {
         let BrowserState::Ready(payload) = ctx.browser().await else {
-            return finish(&self.meta(), judge_webrtc(true, &[], &ctx.region));
+            return finish(&self.meta(), judge_webrtc(None, &[], &ctx.region));
         };
         let mut ips = Vec::new();
         for candidate in payload.webrtc.iter().take(8) {
@@ -289,7 +310,7 @@ impl EnvironmentCheck for WebRtc {
             };
             ips.push(WebRtcIp { ip: candidate.ip.clone(), kind: candidate.kind.clone(), country });
         }
-        finish(&self.meta(), judge_webrtc(false, &ips, &ctx.region))
+        finish(&self.meta(), judge_webrtc(payload.webrtc_status.as_ref(), &ips, &ctx.region))
     }
 }
 
@@ -299,6 +320,12 @@ impl EnvironmentCheck for Fingerprint {
         CheckMeta { id: "fingerprint", category: "browser" }
     }
     async fn detect(&self, ctx: &ScanContext) -> CheckResult {
+        if let Some(judgement) = collection_failure(&ctx.platform, "timezone", ctx.platform.timezone.trim().is_empty()) {
+            return finish(&self.meta(), judgement);
+        }
+        if let Some(judgement) = collection_failure(&ctx.platform, "locale", ctx.platform.locale.trim().is_empty()) {
+            return finish(&self.meta(), judgement);
+        }
         let BrowserState::Ready(payload) = ctx.browser().await else {
             return finish(
                 &self.meta(),
@@ -328,6 +355,9 @@ impl EnvironmentCheck for Location {
         CheckMeta { id: "location", category: "system" }
     }
     async fn detect(&self, ctx: &ScanContext) -> CheckResult {
+        if let Some(judgement) = collection_failure(&ctx.platform, "location", ctx.platform.location_enabled.is_none()) {
+            return finish(&self.meta(), judgement);
+        }
         let permission = match ctx.browser().await {
             BrowserState::Ready(payload) if !payload.geolocation.is_empty() => Some(payload.geolocation),
             _ => None,
@@ -352,7 +382,7 @@ impl EnvironmentCheck for HostsFile {
         CheckMeta { id: "hosts", category: "destination" }
     }
     async fn detect(&self, ctx: &ScanContext) -> CheckResult {
-        finish(&self.meta(), judge_hosts(&parse::parse_hosts(&ctx.platform.hosts)))
+        finish(&self.meta(), judge::judge_hosts_file(&ctx.platform.hosts))
     }
 }
 
@@ -379,7 +409,7 @@ impl EnvironmentCheck for Reachability {
             .iter()
             .map(|sample| ReachHit {
                 host: sample.host,
-                ok: sample.ok,
+                class: sample.class,
                 status: sample.status,
                 latency_ms: sample.latency_ms,
                 error: sample.error.clone(),
@@ -398,6 +428,72 @@ mod tests {
     use crate::platform;
     use crate::region;
     use std::sync::{Arc, Mutex as StdMutex};
+
+    fn empty_snapshot() -> platform::PlatformSnapshot {
+        platform::PlatformSnapshot {
+            os: "linux".into(), timezone: String::new(), locale: String::new(),
+            dns_servers: Vec::new(), route_v4_a: None, route_v4_b: None,
+            route_v6: platform::Ipv6Route::Absent,
+            proxy: platform::ProxySnapshot {
+                enabled: false, pac: false, pac_url: String::new(), bypass: Vec::new(),
+                http_proxy: String::new(), https_proxy: String::new(), socks_proxy: String::new(),
+            },
+            hosts: Ok(String::new()), location_enabled: None, errors: Default::default(),
+        }
+    }
+
+    #[tokio::test]
+    async fn collection_errors_reach_affected_checks() {
+        let mut snapshot = empty_snapshot();
+        for key in ["timezone", "locale", "dns", "route_v4", "proxy", "location"] {
+            snapshot.errors.insert(key.into(), format!("{key} collection denied"));
+        }
+        let ctx = ScanContext::new(
+            region::find("us").unwrap().clone(), snapshot, Arc::new(NullDirectory),
+            Arc::new(StdMutex::new(None::<BrowserPayload>)),
+            "test".into(), "http://127.0.0.1/".into(), false,
+        );
+        for (check, key) in [
+            (Box::new(Timezone) as Box<dyn EnvironmentCheck>, "timezone"),
+            (Box::new(Locale), "locale"), (Box::new(DnsConfigured), "dns"),
+            (Box::new(RouteV4), "route_v4"), (Box::new(UdpQuic), "route_v4"),
+            (Box::new(SystemProxy), "proxy"), (Box::new(Location), "location"),
+        ] {
+            let result = check.detect(&ctx).await;
+            assert_eq!(result.status, Status::Inconclusive, "{key}");
+            assert_eq!(result.observed.get("collectionError"), ctx.platform.errors.get(key));
+        }
+    }
+
+    #[test]
+    fn successful_fallback_values_remain_usable() {
+        let mut snapshot = empty_snapshot();
+        snapshot.errors.insert("dns".into(), "resolvectl unavailable".into());
+        assert!(collection_failure(&snapshot, "dns", true).is_some());
+        snapshot.dns_servers.push("8.8.8.8".into());
+        assert!(collection_failure(&snapshot, "dns", snapshot.dns_servers.is_empty()).is_none());
+        assert_eq!(judge_configured_dns(&[], &[]).status, Status::Warn);
+    }
+
+    #[tokio::test]
+    async fn unavailable_intel_and_independent_ipv6_probe() {
+        let mut snapshot = platform::collect();
+        snapshot.route_v6 = platform::Ipv6Route::Absent;
+        let ctx = ScanContext::new(
+            region::find("us").unwrap().clone(),
+            snapshot,
+            Arc::new(NullDirectory),
+            Arc::new(StdMutex::new(None::<BrowserPayload>)),
+            "test".into(),
+            "http://127.0.0.1/".into(),
+            false,
+        );
+        assert_eq!(ExitV4.detect(&ctx).await.status, Status::Inconclusive);
+        let v6 = ExitV6.detect(&ctx).await;
+        assert_eq!(v6.status, Status::Pass);
+        // Even a confirmed absent route must not skip the exit probe.
+        assert_eq!(v6.observed.get("error").map(String::as_str), Some("offline"));
+    }
 
     #[tokio::test]
     async fn phase_two_methods_stay_unimplemented() {

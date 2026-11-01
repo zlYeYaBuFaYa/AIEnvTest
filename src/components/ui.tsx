@@ -35,7 +35,7 @@ const badgeTone: Record<Status, string> = {
   warn: "bg-status-warn-bg text-status-warn-ink ring-status-warn-border/30",
   fail: "bg-status-fail-bg text-status-fail-ink ring-status-fail-border/30",
   info: "bg-status-neutral-bg text-status-neutral-ink ring-status-neutral-border/30",
-  inconclusive: "bg-status-neutral-bg text-status-neutral-ink ring-status-neutral-border/30",
+  inconclusive: "bg-status-inconclusive-bg text-status-inconclusive-ink ring-status-inconclusive-border/30",
 };
 
 export function StatusBadge({ status, label }: { status: Status; label: string }) {

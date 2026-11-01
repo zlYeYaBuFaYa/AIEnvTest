@@ -33,10 +33,10 @@ pub fn judge_exit(ip: Option<&str>, geo_country: Option<&str>, city: &str, regio
             .expect("country", &expected)
     };
     let Some(ip) = ip.filter(|ip| !ip.is_empty()) else {
-        return base(Status::Fail, "exit.missing", &[], "advice.exit.missing");
+        return base(Status::Inconclusive, "exit.missing", &[], "advice.exit.missing");
     };
     let Some(country) = geo_country.map(parse::norm_country).filter(|c| !c.is_empty()) else {
-        return base(Status::Warn, "exit.unlocated", &[("ip", ip)], "advice.exit.missing").observe("ip", ip);
+        return base(Status::Inconclusive, "exit.unlocated", &[("ip", ip)], "advice.exit.missing").observe("ip", ip);
     };
     let where_ = place(city, region_name, &country);
     let mut judgement = base(
@@ -105,56 +105,24 @@ pub fn judge_exit(ip: Option<&str>, geo_country: Option<&str>, city: &str, regio
     judgement
 }
 
-pub fn judge_ipv6(iface: Option<&str>, exit_country: Option<&str>, place_text: &str, preset: &RegionPreset) -> Judgement {
-    let expected = preset.display("en");
-    let Some(iface) = iface.filter(|iface| !iface.is_empty()) else {
-        return Judgement::new(Status::Pass, "v6.none", params(&[]), "advice.v6.keepOff", params(&[]))
-            .expect("country", &preset.country);
-    };
-    let class = parse::classify_iface(iface);
+pub fn judge_ipv6(route: &crate::platform::Ipv6Route, exit_country: Option<&str>, place_text: &str, preset: &RegionPreset) -> Judgement {
+    use crate::platform::Ipv6Route;
+    let iface = match route { Ipv6Route::Present { iface } => iface.as_str(), _ => "unknown" };
+    if exit_country.is_none() && matches!(route, Ipv6Route::Absent) {
+        return Judgement::new(Status::Pass, "v6.none", params(&[]), "advice.v6.keepOff", params(&[]));
+    }
     let country = exit_country.map(parse::norm_country).unwrap_or_default();
-    let mut judgement = Judgement::new(
-        Status::Warn,
-        "v6.unmeasured",
-        params(&[("iface", iface), ("expected", expected.as_str())]),
-        "advice.v6.tunnel",
-        params(&[("expected", expected.as_str())]),
-    )
-    .observe("iface", iface)
-    .observe("country", &country)
-    .observe("place", place_text)
-    .expect("country", &preset.country);
-    if country.is_empty() {
-        judgement.summary_key = "v6.unmeasured".into();
-        return judgement;
-    }
-    let matches = country == preset.country;
-    let mainland = is_mainland_china(&country);
-    match class {
-        IfaceClass::Tunnel if matches => {
-            judgement.status = Status::Pass;
-            judgement.summary_key = "v6.tunnelOk".into();
-            judgement.advice_key = "advice.v6.ok".into();
-        }
-        IfaceClass::Tunnel => {
-            judgement.status = Status::Fail;
-            judgement.summary_key = "v6.tunnelMismatch".into();
-        }
-        IfaceClass::Physical if mainland || !matches => {
-            judgement.status = Status::Fail;
-            judgement.summary_key = "v6.physicalLeak".into();
-            judgement.summary_params.insert("place".into(), place_text.to_string());
-        }
-        IfaceClass::Physical => {
-            judgement.status = Status::Warn;
-            judgement.summary_key = "v6.physicalOk".into();
-        }
-        IfaceClass::Other => {
-            judgement.status = Status::Warn;
-            judgement.summary_key = "v6.unknown".into();
-        }
-    }
-    judgement
+    let (status, key) = if country.is_empty() {
+        (Status::Inconclusive, "v6.unavailable")
+    } else if country != preset.country {
+        (Status::Fail, "v6.exitMismatch")
+    } else {
+        (Status::Pass, "v6.exitOk")
+    };
+    let mut j = Judgement::new(status, key, params(&[("iface", iface), ("country", &country), ("expected", &preset.display("en")), ("place", place_text)]), if status == Status::Pass { "advice.v6.ok" } else { "advice.v6.tunnel" }, params(&[("expected", &preset.display("en"))]))
+        .observe("iface", iface).observe("country", &country).expect("country", &preset.country);
+    if let Ipv6Route::Unknown(error) = route { j = j.observe("routeError", error); }
+    j
 }
 
 pub fn judge_route(iface_a: Option<&str>, iface_b: Option<&str>, exit_country: Option<&str>, preset: &RegionPreset) -> Judgement {
@@ -196,6 +164,12 @@ pub fn judge_route(iface_a: Option<&str>, iface_b: Option<&str>, exit_country: O
             judgement.status = Status::Pass;
             judgement.summary_key = "route.tunnel".into();
             judgement.advice_key = "advice.route.ok".into();
+        }
+        // Without a located exit we cannot tell a direct mainland path from a
+        // home-region one, so this is a gap in observation, not an exposure.
+        IfaceClass::Physical if country.is_empty() => {
+            judgement.status = Status::Inconclusive;
+            judgement.summary_key = "route.physicalUnmeasured".into();
         }
         IfaceClass::Physical if !matches => {
             judgement.status = Status::Fail;
@@ -480,7 +454,7 @@ pub fn judge_timezone(system: &str, browser: Option<&str>, ip_tz: Option<&str>, 
         judgement.observed.insert("ipTimezone".into(), ip_tz.to_string());
     }
     if system.trim().is_empty() {
-        judgement.status = Status::Warn;
+        judgement.status = Status::Inconclusive;
         judgement.summary_key = "tz.unknown".into();
         judgement.advice_key = "advice.tz.set".into();
         judgement.advice_params = params(&[("expected", expected.as_str())]);
@@ -542,7 +516,7 @@ pub fn judge_locale(system: &str, browser_langs: &[String], accept: &str, browse
     .observe("acceptLanguage", accept)
     .expect("languages", &expected);
     if system.trim().is_empty() {
-        judgement.status = Status::Warn;
+        judgement.status = Status::Inconclusive;
         judgement.summary_key = "locale.unknown".into();
         judgement.advice_key = "advice.locale.set".into();
         judgement.advice_params = params(&[("expected", &expected)]);
@@ -588,17 +562,26 @@ pub struct WebRtcIp {
     pub country: String,
 }
 
-pub fn judge_webrtc(missing: bool, ips: &[WebRtcIp], preset: &RegionPreset) -> Judgement {
+pub fn judge_webrtc(collection: Option<&crate::browser::WebRtcStatus>, ips: &[WebRtcIp], preset: &RegionPreset) -> Judgement {
     let expected = preset.display("en");
-    if missing {
+    if collection.is_none() {
         return Judgement::new(Status::Inconclusive, "webrtc.missing", params(&[]), "advice.webrtc.retry", params(&[]));
     }
+    let collection = collection.unwrap();
+    if !collection.supported {
+        return Judgement::new(Status::Info, "webrtc.disabled", params(&[]), "advice.webrtc.ok", params(&[]));
+    }
+    // Retain observed mismatches even if gathering later failed.
+    let incomplete = !collection.error.is_empty() || collection.ice_state != "complete";
     let public: Vec<&WebRtcIp> = ips.iter().filter(|ip| !is_private_ip(&ip.ip)).collect();
     let described = ips
         .iter()
         .map(|ip| format!("{} ({})", ip.ip, ip.kind))
         .collect::<Vec<_>>()
         .join(", ");
+    if public.is_empty() && incomplete {
+        return Judgement::new(Status::Inconclusive, "webrtc.missing", params(&[]), "advice.webrtc.retry", params(&[])).observe("iceState", &collection.ice_state).observe("error", &collection.error);
+    }
     if public.is_empty() {
         let key = if ips.is_empty() { "webrtc.none" } else { "webrtc.localOnly" };
         return Judgement::new(Status::Pass, key, params(&[("ips", if described.is_empty() { "none" } else { described.as_str() })]), "advice.webrtc.ok", params(&[]))
@@ -620,9 +603,9 @@ pub fn judge_webrtc(missing: bool, ips: &[WebRtcIp], preset: &RegionPreset) -> J
         .observe("candidates", &described)
         .expect("country", &preset.country);
     }
-    let unknown = public.iter().any(|ip| parse::norm_country(&ip.country).is_empty());
+    let unknown = collection.ice_state != "complete" || public.iter().any(|ip| parse::norm_country(&ip.country).is_empty());
     if unknown {
-        return Judgement::new(Status::Warn, "webrtc.fail", params(&[("ip", public[0].ip.as_str()), ("country", "unknown"), ("expected", expected.as_str())]), "advice.webrtc.disable", params(&[]))
+        return Judgement::new(Status::Inconclusive, "webrtc.unmeasured", params(&[("ip", public[0].ip.as_str()), ("country", "unknown"), ("expected", expected.as_str())]), "advice.webrtc.disable", params(&[]))
             .observe("candidates", &described);
     }
     Judgement::new(Status::Pass, "webrtc.ok", params(&[("expected", expected.as_str())]), "advice.webrtc.ok", params(&[]))
@@ -675,6 +658,9 @@ pub fn judge_location(os_enabled: Option<bool>, browser_perm: Option<&str>) -> J
             None => "unknown",
         })
         .observe("permission", if perm.is_empty() { "unknown" } else { perm });
+    if os_enabled.is_none() {
+        return judgement;
+    }
     if os_enabled == Some(true) {
         judgement.status = Status::Warn;
         judgement.summary_key = "loc.warnOs".into();
@@ -735,6 +721,13 @@ fn format_offset(ms: i64) -> String {
     }
 }
 
+pub fn judge_hosts_file(hosts: &Result<String, crate::platform::CollectError>) -> Judgement {
+    match hosts {
+        Ok(text) => judge_hosts(&parse::parse_hosts(text)),
+        Err(e) => Judgement::new(Status::Inconclusive, "hosts.unavailable", params(&[]), "advice.hosts.retry", params(&[])).observe("error", e.to_string()),
+    }
+}
+
 pub fn judge_hosts(overrides: &[(String, String)]) -> Judgement {
     if overrides.is_empty() {
         return Judgement::new(Status::Pass, "hosts.ok", params(&[]), "advice.hosts.ok", params(&[]))
@@ -778,7 +771,7 @@ pub fn judge_tls(issuer: Option<&str>, verified: bool, error: Option<&str>) -> J
 
 pub struct ReachHit {
     pub host: &'static str,
-    pub ok: bool,
+    pub class: crate::context::ReachClass,
     pub status: Option<u16>,
     pub latency_ms: Option<u64>,
     pub error: Option<String>,
@@ -787,16 +780,25 @@ pub struct ReachHit {
 pub fn judge_reach(hits: &[ReachHit]) -> Judgement {
     let detail = hits
         .iter()
-        .map(|hit| match (hit.ok, hit.status, hit.latency_ms, &hit.error) {
-            (true, Some(status), Some(ms), _) => format!("{} HTTP {status} in {ms} ms", hit.host),
+        .map(|hit| match (hit.class == crate::context::ReachClass::Ok, hit.status, hit.latency_ms, &hit.error) {
+            (_, Some(status), Some(ms), _) => format!("{} HTTP {status} in {ms} ms", hit.host),
+            (_, Some(status), _, _) => format!("{} HTTP {status}", hit.host),
             (true, _, Some(ms), _) => format!("{} in {ms} ms", hit.host),
             (_, _, _, Some(err)) => format!("{} failed ({err})", hit.host),
             _ => format!("{} failed", hit.host),
         })
         .collect::<Vec<_>>()
         .join("; ");
-    let ok_count = hits.iter().filter(|hit| hit.ok).count();
-    let (status, key, advice) = if hits.is_empty() || ok_count == 0 {
+    let ok_count = hits.iter().filter(|hit| hit.class == crate::context::ReachClass::Ok).count();
+    use crate::context::ReachClass;
+    let has = |class| hits.iter().any(|h| h.class == class);
+    let (status, key, advice) = if has(ReachClass::RegionDenied) {
+        (Status::Fail, "reach.regionDenied", "advice.reach.fix")
+    } else if hits.is_empty() || has(ReachClass::ServerError) {
+        (Status::Inconclusive, "reach.serverError", "advice.reach.fix")
+    } else if has(ReachClass::RateLimited) {
+        (Status::Warn, "reach.rateLimited", "advice.reach.fix")
+    } else if ok_count == 0 {
         (Status::Fail, "reach.fail", "advice.reach.fix")
     } else if ok_count == hits.len() {
         (Status::Pass, "reach.ok", "advice.reach.ok")
@@ -817,4 +819,89 @@ pub fn judge_reach(hits: &[ReachHit]) -> Judgement {
         params(&[]),
     )
     .observe("detail", &detail)
+    .observe("classes", hits.iter().map(|h| format!("{}: {:?}", h.host, h.class)).collect::<Vec<_>>().join("; "))
+}
+
+#[cfg(test)]
+mod observation_tests {
+    use super::*;
+    use crate::{browser::WebRtcStatus, platform::{CollectError, Ipv6Route}, context::ReachClass};
+    fn preset() -> &'static RegionPreset { crate::region::find("us").unwrap() }
+    #[test]
+    fn empty_system_values_are_inconclusive_without_collection_errors() {
+        for empty in ["", "  "] {
+            assert_eq!(judge_timezone(empty, Some("America/New_York"), None, preset()).status, Status::Inconclusive);
+            assert_eq!(judge_locale(empty, &["en-US".into()], "en-US", false, preset()).status, Status::Inconclusive);
+        }
+        for permission in [None, Some("granted"), Some("denied"), Some("prompt")] {
+            assert_eq!(judge_location(None, permission).status, Status::Inconclusive);
+        }
+    }
+    #[test]
+    fn ipv6_absence_unknown_and_observed_countries() {
+        assert_eq!(judge_ipv6(&Ipv6Route::Absent, None, "", preset()).status, Status::Pass);
+        assert_eq!(judge_ipv6(&Ipv6Route::Unknown("missing command".into()), None, "", preset()).status, Status::Inconclusive);
+        let present = Ipv6Route::Present { iface: "utun0".into() };
+        assert_eq!(judge_ipv6(&present, None, "", preset()).status, Status::Inconclusive);
+        for route in [Ipv6Route::Absent, present, Ipv6Route::Unknown("error".into())] {
+            assert_eq!(judge_ipv6(&route, Some("US"), "", preset()).status, Status::Pass);
+            assert_eq!(judge_ipv6(&route, Some("CN"), "", preset()).status, Status::Fail);
+            assert_eq!(judge_ipv6(&route, Some("JP"), "", preset()).status, Status::Fail);
+            assert_eq!(judge_ipv6(&route, Some(""), "", preset()).status, Status::Inconclusive);
+        }
+    }
+    #[test]
+    fn physical_route_with_unknown_exit_is_inconclusive() {
+        assert_eq!(judge_route(Some("eth0"), Some("eth0"), None, preset()).status, Status::Inconclusive);
+        assert_eq!(judge_route(Some("eth0"), Some("eth0"), Some("CN"), preset()).status, Status::Fail);
+        assert_eq!(judge_route(Some("eth0"), Some("eth0"), Some("US"), preset()).status, Status::Warn);
+    }
+    #[test]
+    fn missing_intel_is_not_exposure() {
+        assert_eq!(judge_exit(None, None, "", "", "", None, preset()).status, Status::Inconclusive);
+        assert_eq!(judge_exit(Some("1.1.1.1"), None, "", "", "", None, preset()).status, Status::Inconclusive);
+    }
+    #[test]
+    fn unreadable_hosts_are_not_clean() {
+        assert_eq!(judge_hosts_file(&Err(CollectError::Io("denied".into()))).status, Status::Inconclusive);
+        assert_eq!(judge_hosts_file(&Ok(String::new())).status, Status::Pass);
+        assert_eq!(judge_hosts_file(&Ok("1.2.3.4 claude.ai".into())).status, Status::Fail);
+    }
+    #[test]
+    fn webrtc_collection_states_are_distinct() {
+        let mut status = WebRtcStatus { supported: true, ice_state: "complete".into(), error: String::new(), candidates: 0 };
+        assert_eq!(judge_webrtc(None, &[], preset()).status, Status::Inconclusive);
+        assert_eq!(judge_webrtc(Some(&status), &[], preset()).status, Status::Pass);
+        status.supported = false;
+        assert_eq!(judge_webrtc(Some(&status), &[], preset()).status, Status::Info);
+        status.supported = true;
+        for state in ["timeout", "failed", ""] {
+            status.ice_state = state.into();
+            assert_eq!(judge_webrtc(Some(&status), &[], preset()).status, Status::Inconclusive);
+        }
+        status.ice_state = "complete".into(); status.error = "offer failed".into();
+        assert_eq!(judge_webrtc(Some(&status), &[], preset()).status, Status::Inconclusive);
+        let leak = [WebRtcIp { ip: "8.8.8.8".into(), kind: "srflx".into(), country: "CN".into() }];
+        assert_eq!(judge_webrtc(Some(&status), &leak, preset()).status, Status::Fail);
+        let located = [WebRtcIp { ip: "8.8.8.8".into(), kind: "srflx".into(), country: "US".into() }];
+        assert_eq!(judge_webrtc(Some(&status), &located, preset()).status, Status::Pass);
+        for state in ["timeout", "failed", "gathering"] {
+            status.ice_state = state.into();
+            assert_eq!(judge_webrtc(Some(&status), &located, preset()).status, Status::Inconclusive);
+            assert_eq!(judge_webrtc(Some(&status), &leak, preset()).status, Status::Fail);
+        }
+        status.ice_state = "complete".into();
+        let unknown = [WebRtcIp { ip: "8.8.8.8".into(), kind: "srflx".into(), country: String::new() }];
+        assert_eq!(judge_webrtc(Some(&status), &unknown, preset()).status, Status::Inconclusive);
+    }
+    #[test]
+    fn reachability_uses_response_classes() {
+        let hit = |class| ReachHit { host: "claude.ai", class, status: None, latency_ms: None, error: None };
+        for (class, expected) in [(ReachClass::Ok, Status::Pass), (ReachClass::RegionDenied, Status::Fail), (ReachClass::RateLimited, Status::Warn), (ReachClass::ServerError, Status::Inconclusive), (ReachClass::Unreachable, Status::Fail)] {
+            let j = judge_reach(&[hit(class), hit(class)]);
+            assert_eq!(j.status, expected); assert!(j.observed.contains_key("classes"));
+        }
+        assert_eq!(judge_reach(&[hit(ReachClass::Ok), hit(ReachClass::Unreachable)]).status, Status::Warn);
+        assert_eq!(judge_reach(&[]).status, Status::Inconclusive);
+    }
 }

@@ -184,11 +184,12 @@ export default function App() {
               <p className="mt-2 text-sm text-muted">
                 {report.regionName[lang] ?? report.regionName.en} · {report.os}
               </p>
+              {counts.inconclusive > 0 && <p className="mt-3 text-sm text-status-inconclusive-ink">{t("report.inconclusiveNote", { count: String(counts.inconclusive) })}</p>}
               <ul className="mt-4 grid grid-cols-2 gap-2">
                 {STATUSES.map((status) => (
-                  <li key={status} className="rounded-2xl bg-paper px-3 py-2">
+                  <li key={status} className={cn("rounded-2xl px-3 py-2", status === "inconclusive" ? "bg-status-inconclusive-bg text-status-inconclusive-ink ring-1 ring-status-inconclusive-border/30" : "bg-paper")}>
                     <div className="text-lg font-semibold">{counts[status]}</div>
-                    <div className="text-xs text-muted">{t(`counts.${status}`)}</div>
+                    <div className={cn("text-xs", status !== "inconclusive" && "text-muted")}>{t(`counts.${status}`)}</div>
                   </li>
                 ))}
               </ul>
@@ -252,7 +253,7 @@ function CheckCard({ check }: { check: CheckResult }) {
     warn: "border-l-status-warn-border",
     fail: "border-l-status-fail-border",
     info: "border-l-status-neutral-border",
-    inconclusive: "border-l-status-neutral-border",
+    inconclusive: "border-l-status-inconclusive-border",
   }[check.status];
   return (
     <details open={check.status === "fail"} className={cn("rounded-2xl border border-line border-l-4 bg-card px-4 py-3", border)}>
@@ -300,5 +301,5 @@ function verdictColor(verdict: Verdict) {
   if (verdict === "consistent") return "text-status-pass-ink";
   if (verdict === "review") return "text-status-warn-ink";
   if (verdict === "exposed") return "text-status-fail-ink";
-  return "text-status-neutral-ink";
+  return "text-status-inconclusive-ink";
 }

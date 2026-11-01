@@ -4,6 +4,7 @@ use super::{command_stdout, env_bypass, env_proxy, PlatformSnapshot, ProxySnapsh
 /// Windows collectors use PowerShell and the registry.
 /// They are compiled only on Windows and were not executed in the Linux verification environment.
 pub fn collect() -> PlatformSnapshot {
+    super::clear_errors();
     let route_v4_a = route_v4("1.1.1.1");
     let route_v4_b = route_v4("8.8.8.8");
     PlatformSnapshot {
@@ -17,22 +18,29 @@ pub fn collect() -> PlatformSnapshot {
         proxy: proxy(),
         hosts: hosts(),
         location_enabled: location_enabled(),
+        errors: super::take_errors(),
     }
 }
 
 pub fn route_v4(dest: &str) -> Option<String> {
     let script = format!("(Find-NetRoute -RemoteIPAddress '{dest}' | Select-Object -First 1).InterfaceAlias");
-    let text = powershell(&script)?;
+    let text = powershell("route_v4", &script)?;
     let iface = text.lines().find(|line| !line.trim().is_empty())?.trim().to_string();
     if iface.is_empty() { None } else { Some(iface) }
 }
 
-pub fn route_v6(dest: &str) -> Option<String> {
-    route_v4(dest)
+pub fn route_v6(_dest: &str) -> super::Ipv6Route {
+    let script = "$ErrorActionPreference = 'Stop'; $r = @(Get-NetRoute -AddressFamily IPv6 -DestinationPrefix '::/0'); if ($r.Count -eq 0) { 'ABSENT' } else { 'IFACE:' + $r[0].InterfaceAlias }";
+    match super::run("powershell", &["-NoProfile", "-NonInteractive", "-Command", script], super::DEFAULT_TIMEOUT) {
+        Ok(text) if text.trim() == "ABSENT" => super::Ipv6Route::Absent,
+        Ok(text) if text.trim().starts_with("IFACE:") && text.trim().len() > 6 => super::Ipv6Route::Present { iface: text.trim()[6..].into() },
+        Ok(_) => super::Ipv6Route::Unknown("unparsable IPv6 route".into()),
+        Err(e) => super::Ipv6Route::Unknown(e.to_string()),
+    }
 }
 
 fn timezone() -> String {
-    let text = powershell("(Get-TimeZone).Id").unwrap_or_default();
+    let text = powershell("timezone", "(Get-TimeZone).Id").unwrap_or_default();
     let id = text.lines().find(|line| !line.trim().is_empty()).unwrap_or("").trim();
     if id.is_empty() {
         String::new()
@@ -42,7 +50,7 @@ fn timezone() -> String {
 }
 
 fn locale() -> String {
-    powershell("(Get-Culture).Name")
+    powershell("locale", "(Get-Culture).Name")
         .unwrap_or_default()
         .lines()
         .find(|line| !line.trim().is_empty())
@@ -52,7 +60,7 @@ fn locale() -> String {
 }
 
 fn dns_servers() -> Vec<String> {
-    let text = powershell(
+    let text = powershell("dns",
         "(Get-DnsClientServerAddress | Where-Object { $_.ServerAddresses } | ForEach-Object { $_.ServerAddresses }) -join \"`n\"",
     )
     .unwrap_or_default();
@@ -83,14 +91,14 @@ fn proxy() -> ProxySnapshot {
     }
 }
 
-fn hosts() -> String {
+fn hosts() -> Result<String, super::CollectError> {
     let windir = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".into());
     let path = std::path::Path::new(&windir).join("System32\\drivers\\etc\\hosts");
-    std::fs::read_to_string(path).unwrap_or_default()
+    super::read_file(path)
 }
 
 fn location_enabled() -> Option<bool> {
-    let text = powershell(
+    let text = powershell("location",
         "(Get-ItemProperty -Path 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\location' -Name Value).Value",
     )?;
     let text = text.trim().to_lowercase();
@@ -103,12 +111,12 @@ fn location_enabled() -> Option<bool> {
     }
 }
 
-fn powershell(script: &str) -> Option<String> {
-    command_stdout("powershell", &["-NoProfile", "-NonInteractive", "-Command", script])
+fn powershell(key: &str, script: &str) -> Option<String> {
+    command_stdout(key, "powershell", &["-NoProfile", "-NonInteractive", "-Command", script])
 }
 
 fn reg(name: &str) -> Option<String> {
-    let text = command_stdout(
+    let text = command_stdout("proxy",
         "reg",
         &[
             "query",

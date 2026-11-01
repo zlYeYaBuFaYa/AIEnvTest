@@ -12,6 +12,8 @@ const PAGE: &str = include_str!("page.html");
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BrowserPayload {
+    #[serde(default)]
+    pub webrtc_status: Option<WebRtcStatus>,
     pub scan_id: String,
     #[serde(default)]
     pub timezone: String,
@@ -29,6 +31,17 @@ pub struct BrowserPayload {
     pub webrtc: Vec<IceAddress>,
     #[serde(default)]
     pub accept_language: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WebRtcStatus {
+    pub supported: bool,
+    #[serde(default)]
+    pub error: String,
+    pub ice_state: String,
+    #[serde(default)]
+    pub candidates: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

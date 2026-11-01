@@ -16,10 +16,25 @@ pub enum BrowserState {
     Missing,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReachClass { Ok, Unreachable, RegionDenied, RateLimited, ServerError }
+
+pub fn classify_reach(host: &str, status: Option<u16>) -> ReachClass {
+    match status {
+        Some(200..=399) => ReachClass::Ok,
+        Some(401 | 404) if host == "api.anthropic.com" => ReachClass::Ok,
+        Some(403 | 451) => ReachClass::RegionDenied,
+        Some(429) => ReachClass::RateLimited,
+        Some(500..=599) => ReachClass::ServerError,
+        Some(_) => ReachClass::ServerError,
+        None => ReachClass::Unreachable,
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ReachSample {
     pub host: &'static str,
-    pub ok: bool,
+    pub class: ReachClass,
     pub status: Option<u16>,
     pub latency_ms: Option<u64>,
     pub error: Option<String>,
@@ -156,24 +171,41 @@ async fn timed(url: &str, host: &'static str) -> ReachSample {
     match http::fetch(url, None, Duration::from_secs(12)).await {
         Ok(response) if response.status > 0 => ReachSample {
             host,
-            ok: true,
+            class: classify_reach(host, Some(response.status)),
             status: Some(response.status),
             latency_ms: Some(started.elapsed().as_millis() as u64),
             error: None,
         },
         Ok(_) => ReachSample {
             host,
-            ok: false,
+            class: ReachClass::Unreachable,
             status: None,
             latency_ms: Some(started.elapsed().as_millis() as u64),
             error: Some("empty response".into()),
         },
         Err(err) => ReachSample {
             host,
-            ok: false,
+            class: ReachClass::Unreachable,
             status: None,
             latency_ms: None,
             error: Some(err),
         },
+    }
+}
+
+#[cfg(test)]
+mod reach_tests {
+    use super::*;
+    #[test]
+    fn classifies_transport_and_http_responses() {
+        for code in [200, 204, 301, 399] { assert_eq!(classify_reach("claude.ai", Some(code)), ReachClass::Ok); }
+        for code in [401, 404] {
+            assert_eq!(classify_reach("api.anthropic.com", Some(code)), ReachClass::Ok);
+            assert_ne!(classify_reach("claude.ai", Some(code)), ReachClass::Ok);
+        }
+        for code in [403, 451] { assert_eq!(classify_reach("claude.ai", Some(code)), ReachClass::RegionDenied); }
+        assert_eq!(classify_reach("claude.ai", Some(429)), ReachClass::RateLimited);
+        for code in [500, 503, 599] { assert_eq!(classify_reach("claude.ai", Some(code)), ReachClass::ServerError); }
+        assert_eq!(classify_reach("claude.ai", None), ReachClass::Unreachable);
     }
 }

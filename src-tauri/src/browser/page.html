@@ -121,28 +121,44 @@
     function collectWebrtc() {
       return new Promise((resolve) => {
         const found = [];
-        let pc;
-        const finish = () => {
+        const status = { supported: typeof RTCPeerConnection !== "undefined", error: "", iceState: "failed", candidates: 0 };
+        let pc, timer, done = false;
+        const finish = (state, error = "") => {
+          if (done) return;
+          done = true;
+          clearTimeout(timer);
+          status.iceState = state;
+          status.error = error;
           try { pc && pc.close(); } catch (e) {}
           const uniq = [];
           for (const item of found) {
             if (!uniq.some((have) => have.ip === item.ip && have.kind === item.kind)) uniq.push(item);
           }
-          resolve(uniq);
+          resolve({ webrtc: uniq, webrtcStatus: status });
         };
+        if (!status.supported) { finish("complete"); return; }
         try {
-          pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
+          pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }, { urls: "stun:stun.cloudflare.com:3478" }] });
           pc.createDataChannel("aienv");
           pc.onicecandidate = (event) => {
-            if (!event.candidate) return;
+            if (!event.candidate) { finish("complete", status.error); return; }
+            status.candidates++;
             found.push(...ipsFrom(event.candidate));
           };
-          pc.createOffer().then((offer) => pc.setLocalDescription(offer)).catch(() => {});
+          pc.onicegatheringstatechange = () => {
+            if (pc.iceGatheringState === "complete") finish("complete", status.error);
+          };
+          pc.oniceconnectionstatechange = () => {
+            if (pc.iceConnectionState === "failed") finish("failed");
+          };
+          pc.onicecandidateerror = (event) => {
+            status.error = event.errorText || "STUN candidate gathering failed";
+          };
+          timer = setTimeout(() => finish("timeout", status.error), 4500);
+          pc.createOffer().then((offer) => pc.setLocalDescription(offer)).catch((e) => finish("failed", String(e)));
         } catch (e) {
-          resolve([]);
-          return;
+          finish("failed", String(e));
         }
-        setTimeout(finish, 4500);
       });
     }
 
@@ -176,10 +192,10 @@
         accept = "";
       }
       document.getElementById("accept").textContent = accept || "empty";
-      const webrtc = await collectWebrtc();
+      const { webrtc, webrtcStatus } = await collectWebrtc();
       document.getElementById("rtc").textContent = webrtc.length
         ? webrtc.map((item) => item.ip + " (" + item.kind + ")").join(", ")
-        : "No IP candidates. WebRTC may be blocked, which avoids a public-address leak.";
+        : (!webrtcStatus.supported ? "WebRTC is disabled in this browser." : webrtcStatus.error || webrtcStatus.iceState !== "complete" ? "WebRTC could not be measured (" + webrtcStatus.iceState + ")." : "ICE gathering completed without IP candidates.");
       const payload = {
         scanId,
         timezone: tz,
@@ -189,6 +205,7 @@
         webdriver,
         geolocation: geo,
         webrtc,
+        webrtcStatus,
         acceptLanguage: accept
       };
       let sent = false;

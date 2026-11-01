@@ -117,7 +117,9 @@ async fn exit_from_ipinfo(family: Family) -> Result<IpFacts, String> {
     if !(200..300).contains(&response.status) {
         return Err(format!("ipinfo status {}", response.status));
     }
-    parse_ipinfo(&response.body)
+    let facts = parse_ipinfo(&response.body)?;
+    validate_family(&facts.ip, family)?;
+    Ok(facts)
 }
 
 async fn exit_from_ipwhois(family: Family) -> Result<IpFacts, String> {
@@ -128,7 +130,9 @@ async fn exit_from_ipwhois(family: Family) -> Result<IpFacts, String> {
     )
     .await?;
     if !(200..300).contains(&response.status) { return Err(format!("ipwho.is status {}", response.status)); }
-    parse_ipwhois(&response.body)
+    let facts = parse_ipwhois(&response.body)?;
+    validate_family(&facts.ip, family)?;
+    Ok(facts)
 }
 
 async fn lookup_ip(ip: &str) -> Result<IpFacts, String> {
@@ -338,5 +342,25 @@ mod tests {
         assert_eq!(facts.org, "Example ISP");
         let facts = parse_ipwhois(r#"{"success":true,"country_code":"US","connection":{"asn":123}}"#).unwrap();
         assert_eq!(facts.org, "AS123");
+    }
+}
+
+fn validate_family(ip: &str, family: Family) -> Result<(), String> {
+    match (ip.parse::<std::net::IpAddr>(), family) {
+        (Ok(std::net::IpAddr::V4(_)), Family::V4) | (Ok(std::net::IpAddr::V6(_)), Family::V6) => Ok(()),
+        _ => Err("exit service returned an invalid IP or the wrong address family".into()),
+    }
+}
+
+#[cfg(test)]
+mod family_tests {
+    use super::*;
+    #[test]
+    fn validates_requested_family() {
+        assert!(validate_family("1.1.1.1", Family::V4).is_ok());
+        assert!(validate_family("::1", Family::V6).is_ok());
+        assert!(validate_family("2a09:bac5::1", Family::V4).is_err());
+        assert!(validate_family("1.1.1.1", Family::V6).is_err());
+        assert!(validate_family("invalid", Family::V4).is_err());
     }
 }

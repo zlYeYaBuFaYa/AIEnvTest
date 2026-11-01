@@ -28,6 +28,9 @@
   --status-fail-bg: 254 242 242;
   --status-fail-ink: 153 27 27;
   --status-fail-border: 185 28 28;
+  --status-inconclusive-bg: 238 242 255;
+  --status-inconclusive-ink: 67 56 129;
+  --status-inconclusive-border: 99 102 161;
   --status-neutral-bg: 245 245 244;
   --status-neutral-ink: 68 64 60;
   --status-neutral-border: 120 113 108;
@@ -65,6 +68,9 @@
   --status-fail-bg: 53 30 29;
   --status-fail-ink: 241 170 165;
   --status-fail-border: 189 106 99;
+  --status-inconclusive-bg: 37 41 65;
+  --status-inconclusive-ink: 183 190 236;
+  --status-inconclusive-border: 129 140 196;
   --status-neutral-bg: 43 39 33;
   --status-neutral-ink: 195 185 171;
   --status-neutral-border: 128 117 104;

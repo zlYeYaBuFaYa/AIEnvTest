@@ -7,7 +7,7 @@ pub fn verdict(checks: &[CheckResult]) -> Verdict {
     if checks.iter().any(|check| check.status == Status::Fail) {
         return Verdict::Exposed;
     }
-    if checks.iter().any(|check| {
+    if checks.iter().filter(|c| c.status == Status::Inconclusive).count() > checks.len() / 2 || checks.iter().any(|check| {
         CRITICAL.contains(&check.id.as_str()) && check.status == Status::Inconclusive
     }) {
         return Verdict::Inconclusive;
@@ -41,6 +41,10 @@ pub fn markdown(report: &ScanReport, lang: &str) -> String {
     ));
     out.push_str(&format!("- {}: {}\n", i18n::tr(lang, "report.verdict", &Default::default()), verdict));
     out.push_str(&format!("- {}: {}\n\n", i18n::tr(lang, "report.phase", &Default::default()), report.phase));
+    let counts = [Status::Fail, Status::Inconclusive, Status::Warn, Status::Info, Status::Pass].iter().map(|status| {
+        format!("{}: {}", i18n::tr(lang, &format!("counts.{}", status_key(*status)), &Default::default()), report.checks.iter().filter(|c| c.status == *status).count())
+    }).collect::<Vec<_>>().join(" · ");
+    out.push_str(&format!("{counts}\n\n"));
     out.push_str(&format!("> {}\n\n", i18n::tr(lang, "notice.purpose.body", &Default::default())));
     out.push_str(&format!("> {}\n\n", i18n::tr(lang, "notice.risk.body", &Default::default())));
 
@@ -118,6 +122,14 @@ mod tests {
     }
 
     #[test]
+    fn majority_gaps_and_observed_failures() {
+        assert_eq!(verdict(&[sample(Status::Inconclusive, "clock"), sample(Status::Inconclusive, "webrtc")]), Verdict::Inconclusive);
+        assert_eq!(verdict(&[sample(Status::Inconclusive, "clock"), sample(Status::Inconclusive, "webrtc"), sample(Status::Fail, "hosts")]), Verdict::Exposed);
+        assert_eq!(verdict(&[sample(Status::Inconclusive, "clock"), sample(Status::Pass, "hosts")]), Verdict::Review);
+        assert_eq!(verdict(&[sample(Status::Inconclusive, "dns_leak"), sample(Status::Pass, "hosts"), sample(Status::Pass, "clock")]), Verdict::Inconclusive);
+    }
+
+    #[test]
     fn verdict_ranks_fail_above_warning_and_keeps_critical_gaps() {
         assert_eq!(verdict(&[sample(Status::Pass, "exit_ipv4"), sample(Status::Info, "dns_ecs")]), Verdict::Consistent);
         assert_eq!(verdict(&[sample(Status::Warn, "route_ipv4")]), Verdict::Review);
@@ -126,6 +138,6 @@ mod tests {
             verdict(&[sample(Status::Inconclusive, "exit_ipv4"), sample(Status::Pass, "dns_leak")]),
             Verdict::Inconclusive
         );
-        assert_eq!(verdict(&[sample(Status::Inconclusive, "clock")]), Verdict::Review);
+        assert_eq!(verdict(&[sample(Status::Inconclusive, "clock")]), Verdict::Inconclusive);
     }
 }
