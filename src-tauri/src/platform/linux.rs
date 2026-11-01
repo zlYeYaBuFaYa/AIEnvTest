@@ -10,6 +10,7 @@ pub fn collect() -> PlatformSnapshot {
     let route_v6 = route_v6("2606:4700:4700::1111");
     let dns_iface = route_v4_a.clone().or_else(|| route_v4_b.clone());
     PlatformSnapshot {
+            windows_territory: None, windows_routes: vec![],
             dns_blocks: Vec::new(),
         os: "linux".into(),
         timezone: timezone(),

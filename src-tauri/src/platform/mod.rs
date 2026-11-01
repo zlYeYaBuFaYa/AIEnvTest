@@ -1,4 +1,6 @@
 pub mod parse;
+pub mod windows_parse;
+pub mod windows_zones;
 
 #[cfg(target_os = "linux")]
 mod linux;
@@ -26,6 +28,8 @@ pub struct PlatformSnapshot {
     pub errors: std::collections::BTreeMap<String, String>,
     pub os: String,
     pub timezone: String,
+    pub windows_territory: Option<String>,
+    pub windows_routes: Vec<windows_parse::EffectiveRoute>,
     pub locale: String,
     pub dns_servers: Vec<String>,
     pub route_v4_a: Option<String>,
@@ -56,6 +60,7 @@ pub fn collect() -> PlatformSnapshot {
             errors: Default::default(),
             os: std::env::consts::OS.to_string(),
             timezone: String::new(),
+            windows_territory: None, windows_routes: vec![],
             locale: String::new(),
             dns_servers: Vec::new(),
             route_v4_a: None,

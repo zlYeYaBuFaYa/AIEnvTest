@@ -1,125 +1,69 @@
-use super::parse::{self, dedup_keep};
 use super::{command_stdout, env_bypass, env_proxy, PlatformSnapshot, ProxySnapshot};
+use super::windows_parse as wp;
+use serde_json::Value;
 
-/// Windows collectors use PowerShell and the registry.
-/// They are compiled only on Windows and were not executed in the Linux verification environment.
 pub fn collect() -> PlatformSnapshot {
     super::clear_errors();
-    let route_v4_a = route_v4("1.1.1.1");
-    let route_v4_b = route_v4("8.8.8.8");
+    let adapters=shared_rows("Get-NetAdapter -IncludeHidden | Select-Object ifIndex,Name,InterfaceDescription,InterfaceType,MediaType,PhysicalMediaType,Status,Virtual,HardwareInterface,DriverDescription,ComponentID");
+    let interfaces=shared_rows("Get-NetIPInterface | Select-Object ifIndex,AddressFamily,ConnectionState,InterfaceMetric");
+    let routes=rows("route_v4", &wp::route_script());
+    let dns=rows("dns", "Get-DnsClientServerAddress | Select-Object InterfaceIndex,InterfaceAlias,AddressFamily,ServerAddresses");
+    let nrpt=rows("dns", &wp::nrpt_script());
+    let dns_blocks=wp::dns_blocks(&adapters,&interfaces,&dns,&nrpt);
+    let dns_servers=if super::ERRORS.with(|e| e.borrow().contains_key("dns")) { vec![] } else { wp::effective_servers(&dns_blocks) };
+    if dns_servers.is_empty() && !super::ERRORS.with(|e| e.borrow().contains_key("dns")) {
+        super::record("dns", &super::CollectError::Io("no usable effective resolver for target hosts (inactive interfaces, unavailable policy, or unsupported policy transport)".into()));
+    }
+    let v4=wp::effective_route(&adapters,&interfaces,&routes,false);
+    let v6=wp::effective_route(&adapters,&interfaces,&routes,true);
+    let route_v4_a=v4.as_ref().map(|r| r.alias.clone());
+    let route_v6=if let Some(r)=&v6 { super::Ipv6Route::Present {iface:r.alias.clone()} }
+        else if super::ERRORS.with(|e| e.borrow().contains_key("route_v4")) { super::Ipv6Route::Unknown("route collection failed".into()) }
+        else { super::Ipv6Route::Absent };
     PlatformSnapshot {
-            dns_blocks: Vec::new(),
-        os: "windows".into(),
-        timezone: timezone(),
-        locale: locale(),
-        dns_servers: dns_servers(),
-        route_v4_a,
-        route_v4_b,
-        route_v6: route_v6("2606:4700:4700::1111"),
-        proxy: proxy(),
-        hosts: hosts(),
-        location_enabled: location_enabled(),
-        errors: super::take_errors(),
+        os:"windows".into(), timezone:scalar("timezone","(Get-TimeZone).Id"),
+        windows_territory:Some(scalar("territory","(New-Object System.Globalization.RegionInfo (Get-Culture).Name).TwoLetterISORegionName")).filter(|s| !s.is_empty()),
+        windows_routes:v4.into_iter().chain(v6).collect(),
+        locale:scalar("locale","(Get-Culture).Name"),
+        dns_blocks,dns_servers,route_v4_b:route_v4_a.clone(),route_v4_a,route_v6,
+        proxy:proxy(),hosts:hosts(),location_enabled:location_enabled(),errors:super::take_errors(),
     }
 }
-
-pub fn route_v4(dest: &str) -> Option<String> {
-    let script = format!("(Find-NetRoute -RemoteIPAddress '{dest}' | Select-Object -First 1).InterfaceAlias");
-    let text = powershell("route_v4", &script)?;
-    let iface = text.lines().find(|line| !line.trim().is_empty())?.trim().to_string();
-    if iface.is_empty() { None } else { Some(iface) }
-}
-
-pub fn route_v6(_dest: &str) -> super::Ipv6Route {
-    let script = "$ErrorActionPreference = 'Stop'; $r = @(Get-NetRoute -AddressFamily IPv6 -DestinationPrefix '::/0'); if ($r.Count -eq 0) { 'ABSENT' } else { 'IFACE:' + $r[0].InterfaceAlias }";
-    match super::run("powershell", &["-NoProfile", "-NonInteractive", "-Command", script], super::DEFAULT_TIMEOUT) {
-        Ok(text) if text.trim() == "ABSENT" => super::Ipv6Route::Absent,
-        Ok(text) if text.trim().starts_with("IFACE:") && text.trim().len() > 6 => super::Ipv6Route::Present { iface: text.trim()[6..].into() },
-        Ok(_) => super::Ipv6Route::Unknown("unparsable IPv6 route".into()),
-        Err(e) => super::Ipv6Route::Unknown(e.to_string()),
+// Only adapter and IP-interface inventory are shared route/DNS inputs.
+fn shared_rows(script: &str) -> Vec<Value> {
+    let result = super::run("powershell.exe", &["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", &wp::powershell_script(script)], super::DEFAULT_TIMEOUT)
+        .and_then(|text| wp::json_rows(text.as_bytes()));
+    match result {
+        Ok(rows) => rows,
+        Err(error) => {
+            for key in ["route_v4", "dns"] { super::record(key, &error); }
+            vec![]
+        }
     }
 }
-
-fn timezone() -> String {
-    let text = powershell("timezone", "(Get-TimeZone).Id").unwrap_or_default();
-    let id = text.lines().find(|line| !line.trim().is_empty()).unwrap_or("").trim();
-    if id.is_empty() {
-        String::new()
-    } else {
-        parse::windows_tz_to_iana(id)
-    }
+fn rows(key: &str, script: &str) -> Vec<Value> {
+    let Some(text)=powershell(key,script) else {return vec![]};
+    match wp::json_rows(text.as_bytes()) { Ok(rows)=>rows, Err(e)=>{super::record(key,&e); vec![]} }
 }
-
-fn locale() -> String {
-    powershell("locale", "(Get-Culture).Name")
-        .unwrap_or_default()
-        .lines()
-        .find(|line| !line.trim().is_empty())
-        .unwrap_or("")
-        .trim()
-        .to_string()
+fn scalar(key: &str, script: &str) -> String {
+    wp::scalar(&rows(key,script))
 }
-
-fn dns_servers() -> Vec<String> {
-    let text = powershell("dns",
-        "(Get-DnsClientServerAddress | Where-Object { $_.ServerAddresses } | ForEach-Object { $_.ServerAddresses }) -join \"`n\"",
-    )
-    .unwrap_or_default();
-    dedup_keep(
-        text.lines()
-            .map(|line| line.trim().to_string())
-            .filter(|ip| !ip.is_empty() && !parse::is_ignored_dns(ip))
-            .collect(),
-    )
-}
-
 fn proxy() -> ProxySnapshot {
     // Read optional registry properties in one successful collection: absent values
     // are normal, while failure to read the settings remains a collection error.
-    let raw = powershell("proxy", r"$ErrorActionPreference='Stop'; Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings' | Select-Object ProxyEnable,ProxyServer,ProxyOverride,AutoConfigURL,AutoDetect | ConvertTo-Json -Compress").unwrap_or_default();
-    let settings: serde_json::Value = serde_json::from_str(&raw).unwrap_or_else(|e| {
-        super::record("proxy", &super::CollectError::Io(format!("invalid proxy settings: {e}")));
-        serde_json::Value::Null
-    });
-    let value = |name: &str| settings[name].as_str().map(str::to_owned).or_else(|| settings[name].as_u64().map(|n| n.to_string())).unwrap_or_default();
-    let enable=value("ProxyEnable");
-    let server=value("ProxyServer");
-    let bypass_raw=value("ProxyOverride");
-    let pac_url=value("AutoConfigURL");
-    let wpad=value("AutoDetect")=="1";
-    let manual = parse::parse_windows_proxy(&enable, &server);
-    let env = (env_proxy(&["http_proxy","HTTP_PROXY"]), env_proxy(&["https_proxy","HTTPS_PROXY"]), env_proxy(&["all_proxy","ALL_PROXY"]));
-    let mut sources = std::collections::BTreeMap::new();
-    for (key,value) in [("wininet.http",&manual.0),("wininet.https",&manual.1),("wininet.socks",&manual.2),("env.http",&env.0),("env.https",&env.1),("env.all",&env.2),("pac",&pac_url)] { if !value.is_empty() { sources.insert(key.into(),value.clone()); } }
-    let enabled = [&manual.0,&manual.1,&manual.2,&env.0,&env.1,&env.2].iter().any(|v| !v.is_empty());
-    let mut bypass = if manual.0.is_empty() && manual.1.is_empty() && manual.2.is_empty() { vec![] } else { parse::split_bypass_list(&bypass_raw) };
-    if [&env.0,&env.1,&env.2].iter().any(|v| !v.is_empty()) { bypass.extend(env_bypass()); }
-    ProxySnapshot { sources, wpad, enabled, pac: !pac_url.is_empty(), pac_url, bypass: dedup_keep(bypass),
-        http_proxy: if !env.0.is_empty() {env.0} else {manual.0},
-        https_proxy: if !env.1.is_empty() {env.1} else {manual.1},
-        socks_proxy: if !env.2.is_empty() {env.2} else {manual.2} }
+    let settings = rows("proxy", r"Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings' | Select-Object ProxyEnable,ProxyServer,ProxyOverride,AutoConfigURL,AutoDetect").into_iter().next().unwrap_or_default();
+    wp::proxy_snapshot(&settings, (env_proxy(&["http_proxy","HTTP_PROXY"]),env_proxy(&["https_proxy","HTTPS_PROXY"]),env_proxy(&["all_proxy","ALL_PROXY"])),env_bypass())
 }
+
 
 fn hosts() -> Result<String, super::CollectError> {
-    let windir = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".into());
-    let path = std::path::Path::new(&windir).join("System32\\drivers\\etc\\hosts");
-    super::read_file(path)
+    let windir=std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".into());
+    super::read_file(std::path::Path::new(&windir).join("System32").join("drivers").join("etc").join("hosts"))
 }
-
 fn location_enabled() -> Option<bool> {
-    let text = powershell("location",
-        "(Get-ItemProperty -Path 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\location' -Name Value).Value",
-    )?;
-    let text = text.trim().to_lowercase();
-    if text == "allow" {
-        Some(true)
-    } else if text == "deny" {
-        Some(false)
-    } else {
-        None
-    }
+    wp::location(&scalar("location", &wp::location_script()))
 }
-
 fn powershell(key: &str, script: &str) -> Option<String> {
-    command_stdout(key, "powershell", &["-NoProfile", "-NonInteractive", "-Command", script])
+    let script=wp::powershell_script(script);
+    command_stdout(key,"powershell.exe",&["-NoProfile","-NonInteractive","-ExecutionPolicy","Bypass","-Command",&script])
 }

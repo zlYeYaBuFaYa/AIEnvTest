@@ -243,7 +243,9 @@ pub fn any_language_match(observed: &[String], expected: &[String]) -> bool {
 }
 
 pub fn canon_tz(tz: &str) -> String {
-    match tz.trim() {
+    let tz=tz.trim();
+    let canonical=super::windows_zones::IANA_ALIASES.iter().find(|(alias,_)| *alias==tz).map(|(_,target)| *target).unwrap_or(tz);
+    match canonical {
         "UTC" | "Etc/UTC" | "GMT" | "Etc/GMT" | "Etc/GMT+0" | "Zulu" => "UTC".into(),
         other => other.to_string(),
     }
@@ -574,6 +576,7 @@ pub fn parse_scutil_proxy(text: &str) -> (bool, bool, Vec<String>, Option<String
 
 #[derive(Debug, Clone, Default)]
 pub struct ResolverBlock {
+    pub interface_index: Option<u32>, pub address_family: Option<u32>, pub policy: Option<serde_json::Value>,
     pub domains: Vec<String>, pub nameservers: Vec<String>, pub iface: String,
     pub order: Option<u32>, pub scoped: bool, pub section_scoped: bool, pub supplemental: bool, pub mdns: bool,
 }
@@ -607,8 +610,8 @@ pub fn parse_resolver_blocks(text: &str) -> Vec<ResolverBlock> {
 }
 pub fn resolvers_for_host<'a>(blocks: &'a [ResolverBlock], host: &str) -> Vec<&'a ResolverBlock> {
     let host=host.trim_end_matches('.').to_lowercase();
-    let specificity = |b: &ResolverBlock| b.domains.iter().filter(|d| host==**d || host.ends_with(&format!(".{d}"))).map(String::len).max().unwrap_or(0);
-    let candidates: Vec<_> = blocks.iter().filter(|b| !b.mdns && !b.scoped && !b.section_scoped && !b.nameservers.is_empty()).collect();
+    let specificity = |b: &ResolverBlock| b.domains.iter().filter(|d| ((d.is_empty() || d.as_str()==".") && b.policy.is_some()) || host==**d || host.ends_with(&format!(".{d}"))).map(|d| if d == "." { 1 } else { d.len()+1 }).max().unwrap_or(0);
+    let candidates: Vec<_> = blocks.iter().filter(|b| !b.mdns && !b.scoped && !b.section_scoped && (!b.nameservers.is_empty() || b.policy.is_some())).collect();
     let best=candidates.iter().map(|b| specificity(b)).max().unwrap_or(0);
     let selected: Vec<_> = candidates.into_iter().filter(|b| if best>0 { specificity(b)==best } else { b.domains.is_empty() }).collect();
     let order=selected.iter().map(|b| b.order.unwrap_or(u32::MAX)).min();
@@ -691,47 +694,20 @@ pub fn parse_kioslaverc(text: &str) -> (bool, bool, Vec<String>, Option<String>)
     (enabled, pac, no_proxy, pac_url)
 }
 
-pub fn windows_tz_to_iana(windows_id: &str) -> String {
-    let id = windows_id.trim();
-    let mapped = match id {
-        "Pacific Standard Time" => "America/Los_Angeles",
-        "Mountain Standard Time" => "America/Denver",
-        "US Mountain Standard Time" => "America/Phoenix",
-        "Central Standard Time" => "America/Chicago",
-        "Eastern Standard Time" => "America/New_York",
-        "Alaskan Standard Time" => "America/Anchorage",
-        "Hawaiian Standard Time" => "Pacific/Honolulu",
-        "Aleutian Standard Time" => "America/Adak",
-        "Atlantic Standard Time" => "America/Halifax",
-        "Newfoundland Standard Time" => "America/St_Johns",
-        "Canada Central Standard Time" => "America/Regina",
-        "SA Pacific Standard Time" => "America/Bogota",
-        "GMT Standard Time" => "Europe/London",
-        "Greenwich Standard Time" => "Atlantic/Reykjavik",
-        "W. Europe Standard Time" => "Europe/Berlin",
-        "Romance Standard Time" => "Europe/Paris",
-        "Central Europe Standard Time" => "Europe/Budapest",
-        "Central European Standard Time" => "Europe/Warsaw",
-        "E. Europe Standard Time" => "Europe/Bucharest",
-        "FLE Standard Time" => "Europe/Kiev",
-        "GTB Standard Time" => "Europe/Athens",
-        "South Africa Standard Time" => "Africa/Johannesburg",
-        "Tokyo Standard Time" => "Asia/Tokyo",
-        "Korea Standard Time" => "Asia/Seoul",
-        "Singapore Standard Time" => "Asia/Singapore",
-        "Taipei Standard Time" => "Asia/Taipei",
-        "China Standard Time" => "Asia/Shanghai",
-        "AUS Eastern Standard Time" => "Australia/Sydney",
-        "E. Australia Standard Time" => "Australia/Brisbane",
-        "Cen. Australia Standard Time" => "Australia/Adelaide",
-        "AUS Central Standard Time" => "Australia/Darwin",
-        "W. Australia Standard Time" => "Australia/Perth",
-        "Tasmania Standard Time" => "Australia/Hobart",
-        "New Zealand Standard Time" => "Pacific/Auckland",
-        "UTC" | "Coordinated Universal Time" => "UTC",
-        other => other,
-    };
-    mapped.to_string()
+pub fn windows_to_iana(windows_id: &str, territory: Option<&str>) -> Vec<String> {
+    let rows = super::windows_zones::WINDOWS_ZONES;
+    let mut result=Vec::new();
+    for territory in [territory.unwrap_or("001"), "001"] {
+        for &(id, country, zones) in rows {
+            if id==windows_id.trim() && country.eq_ignore_ascii_case(territory) {
+                for zone in zones.split_whitespace() {
+                    let zone=canon_tz(zone);
+                    if !result.contains(&zone) { result.push(zone); }
+                }
+            }
+        }
+    }
+    result
 }
 
 pub fn datacenter_hint(org: &str, hosting: Option<bool>) -> bool {
@@ -1040,8 +1016,8 @@ resolver #2
             parse_apple_languages("(\n    \"en-US\",\n    \"zh-Hans-CN\"\n)\n").as_deref(),
             Some("en-US")
         );
-        assert_eq!(windows_tz_to_iana("Tokyo Standard Time"), "Asia/Tokyo");
-        assert_eq!(windows_tz_to_iana("China Standard Time"), "Asia/Shanghai");
+        assert_eq!(windows_to_iana("Tokyo Standard Time", None), vec!["Asia/Tokyo"]);
+        assert_eq!(windows_to_iana("China Standard Time", None), vec!["Asia/Shanghai"]);
         assert!(datacenter_hint("AS14618 Amazon.com, Inc.", Some(true)));
         assert!(!datacenter_hint("Comcast Cable Communications", Some(false)));
         assert!(known_public_ca("C=US, O=Google Trust Services, CN=WE1"));

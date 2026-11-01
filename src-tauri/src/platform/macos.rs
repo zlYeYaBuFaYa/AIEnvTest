@@ -8,6 +8,7 @@ pub fn collect() -> PlatformSnapshot {
     let route_v4_a = route_v4("1.1.1.1");
     let route_v4_b = route_v4("8.8.8.8");
     PlatformSnapshot {
+            windows_territory: None, windows_routes: vec![],
             dns_blocks: parse::parse_resolver_blocks(&command_stdout("dns", "scutil", &["--dns"]).unwrap_or_default()),
         os: "macos".into(),
         timezone: timezone(),

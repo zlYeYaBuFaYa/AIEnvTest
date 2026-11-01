@@ -126,6 +126,10 @@ pub fn judge_ipv6(route: &crate::platform::Ipv6Route, exit_country: Option<&str>
 }
 
 pub fn judge_route(iface_a: Option<&str>, iface_b: Option<&str>, exit_country: Option<&str>, preset: &RegionPreset) -> Judgement {
+    judge_route_classified(iface_a,iface_b,exit_country,preset,None)
+}
+
+pub fn judge_route_classified(iface_a: Option<&str>, iface_b: Option<&str>, exit_country: Option<&str>, preset: &RegionPreset, class: Option<IfaceClass>) -> Judgement {
     let expected = preset.display("en");
     let primary = iface_a.filter(|s| !s.is_empty()).or(iface_b.filter(|s| !s.is_empty()));
     let Some(iface) = primary else {
@@ -147,7 +151,7 @@ pub fn judge_route(iface_a: Option<&str>, iface_b: Option<&str>, exit_country: O
         .observe("iface", iface)
         .observe("ifaceAlt", alt);
     }
-    let class = parse::classify_iface(iface);
+    let class = class.unwrap_or_else(|| parse::classify_iface(iface));
     let country = exit_country.map(parse::norm_country).unwrap_or_default();
     let matches = country == preset.country && !country.is_empty();
     let mut judgement = Judgement::new(
@@ -185,10 +189,14 @@ pub fn judge_route(iface_a: Option<&str>, iface_b: Option<&str>, exit_country: O
 }
 
 pub fn judge_quic(iface: Option<&str>, proxy_enabled: bool) -> Judgement {
+    judge_quic_classified(iface,proxy_enabled,None)
+}
+
+pub fn judge_quic_classified(iface: Option<&str>, proxy_enabled: bool, class: Option<IfaceClass>) -> Judgement {
     let Some(iface) = iface.filter(|s| !s.is_empty()) else {
         return Judgement::new(Status::Inconclusive, "quic.missing", params(&[]), "advice.quic.missing", params(&[]));
     };
-    match parse::classify_iface(iface) {
+    match class.unwrap_or_else(|| parse::classify_iface(iface)) {
         IfaceClass::Tunnel => Judgement::new(
             Status::Pass,
             "quic.tunnel",
@@ -429,6 +437,14 @@ pub fn judge_ecs(subnet: Option<&str>, country: Option<&str>, preset: &RegionPre
         judgement.advice_key = "advice.ecs.fix".into();
     }
     judgement
+}
+
+pub fn judge_windows_timezone(raw: &str, territory: Option<&str>, browser: Option<&str>, ip_tz: Option<&str>, preset: &RegionPreset) -> Judgement {
+    let mapped=parse::windows_to_iana(raw,territory.or(Some(&preset.country)));
+    let chosen=mapped.iter().find(|id| browser.is_some_and(|b| canon_tz(b)==canon_tz(id)) && tz_allowed(id,&preset.timezones))
+        .or_else(|| mapped.iter().find(|id| tz_allowed(id,&preset.timezones))).or_else(|| mapped.first());
+    judge_timezone(chosen.map(String::as_str).unwrap_or(""),browser,ip_tz,preset)
+        .observe("system",raw).observe("windowsTerritory",territory.unwrap_or(&preset.country)).observe("mappedTimezones",mapped.join(", "))
 }
 
 pub fn judge_timezone(system: &str, browser: Option<&str>, ip_tz: Option<&str>, preset: &RegionPreset) -> Judgement {
@@ -823,6 +839,17 @@ pub fn judge_reach(hits: &[ReachHit]) -> Judgement {
 mod observation_tests {
     use super::*;
     use crate::{browser::WebRtcStatus, platform::{CollectError, Ipv6Route}, context::ReachClass};
+    #[test]
+    fn windows_timezone_territories_and_raw_observation() {
+        for (id,territory,region) in [("Eastern Standard Time","CA","ca"),("Eastern Standard Time","US","us"),("W. Europe Standard Time","NL","nl"),("W. Europe Standard Time","DE","de")] {
+            let p=crate::region::find(region).unwrap();
+            let j=judge_windows_timezone(id,Some(territory),None,None,p);
+            assert_eq!(j.status,Status::Pass,"{region}");
+            assert_eq!(j.observed["system"],id);
+            assert_eq!(judge_windows_timezone(id,None,None,None,p).status,Status::Pass);
+        }
+        assert_eq!(judge_windows_timezone("unknown",None,None,None,preset()).status,Status::Inconclusive);
+    }
     fn preset() -> &'static RegionPreset { crate::region::find("us").unwrap() }
     #[test]
     fn empty_system_values_are_inconclusive_without_collection_errors() {

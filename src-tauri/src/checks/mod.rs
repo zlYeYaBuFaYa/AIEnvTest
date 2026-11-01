@@ -9,7 +9,7 @@ use crate::net::http;
 use crate::platform::parse::{self, IfaceClass};
 use judge::{
     judge_clock, judge_configured_dns, judge_ecs, judge_exit, judge_fingerprint, judge_ipv6,
-    judge_leak, judge_locale, judge_location, judge_proxy, judge_quic, judge_reach, judge_route, judge_timezone,
+    judge_leak, judge_locale, judge_location, judge_proxy, judge_reach, judge_timezone,
     judge_tls, judge_webrtc, DnsServerView, LeakHit, ProxyView, ReachHit, WebRtcIp,
 };
 
@@ -111,12 +111,16 @@ impl EnvironmentCheck for RouteV4 {
             return finish(&self.meta(), judgement);
         }
         let country = ctx.exit_v4().await.ok().map(|facts| facts.country);
-        let judgement = judge_route(
+        let judgement = judge::judge_route_classified(
             ctx.platform.route_v4_a.as_deref(),
             ctx.platform.route_v4_b.as_deref(),
             country.as_deref(),
             &ctx.region,
+            ctx.platform.windows_routes.iter().find(|r| Some(r.alias.as_str()) == ctx.platform.route_v4_a.as_deref()).map(|r| r.class),
         );
+        let judgement = if let Some(route) = ctx.platform.windows_routes.iter().find(|r| Some(r.alias.as_str()) == ctx.platform.route_v4_a.as_deref()) {
+            judgement.observe("ifIndex",route.index.to_string()).observe("interfaceClass",route.classification).observe("routeMetric",route.metric.to_string())
+        } else { judgement };
         finish(&self.meta(), judgement)
     }
 }
@@ -134,7 +138,7 @@ impl EnvironmentCheck for UdpQuic {
             return finish(&self.meta(), judgement);
         }
         let iface = ctx.platform.route_v4_a.as_deref().or(ctx.platform.route_v4_b.as_deref());
-        finish(&self.meta(), judge_quic(iface, ctx.platform.proxy.enabled))
+        finish(&self.meta(), judge::judge_quic_classified(iface, ctx.platform.proxy.enabled, ctx.platform.windows_routes.iter().find(|r| Some(r.alias.as_str()) == iface).map(|r| r.class)))
     }
 }
 
@@ -169,7 +173,7 @@ impl EnvironmentCheck for SystemProxy {
             None
         };
         let iface = ctx.platform.route_v4_a.as_deref().or(ctx.platform.route_v4_b.as_deref());
-        let tunnel = iface.map(parse::classify_iface) == Some(IfaceClass::Tunnel);
+        let tunnel = ctx.platform.windows_routes.iter().find(|r| Some(r.alias.as_str()) == iface).map(|r| r.class).or_else(|| iface.map(parse::classify_iface)) == Some(IfaceClass::Tunnel);
         let judgement = judge_proxy(ProxyView {
             enabled: ctx.platform.proxy.enabled,
             pac: ctx.platform.proxy.pac,
@@ -209,12 +213,26 @@ impl EnvironmentCheck for SystemProxy {
     }
 }
 
+fn unsupported_nrpt(blocks: &[parse::ResolverBlock]) -> Option<Judgement> {
+    let mut result = None;
+    for host in ["claude.ai", "api.anthropic.com"] {
+        if parse::resolvers_for_host(blocks, host).iter().any(|b| b.policy.is_some() && b.nameservers.is_empty()) {
+            let judgement = result.get_or_insert_with(|| Judgement::new(Status::Inconclusive, "dns.scopedInfo", params(&[]), "advice.ecs.retry", params(&[])));
+            *judgement = judgement.clone().observe(host, "NRPT policy without plain DNS servers");
+        }
+    }
+    result
+}
+
 #[async_trait]
 impl EnvironmentCheck for DnsConfigured {
     fn meta(&self) -> CheckMeta {
         CheckMeta { id: "dns_configured", category: "dns" }
     }
     async fn detect(&self, ctx: &ScanContext) -> CheckResult {
+        if let Some(judgement) = unsupported_nrpt(&ctx.platform.dns_blocks) {
+            return finish(&self.meta(), judgement);
+        }
         if let Some(judgement) = collection_failure(&ctx.platform, "dns", ctx.platform.dns_servers.is_empty()) {
             return finish(&self.meta(), judgement);
         }
@@ -323,7 +341,9 @@ impl EnvironmentCheck for Timezone {
         let ip_tz = ctx.exit_v4().await.ok().map(|facts| facts.timezone).filter(|tz| !tz.is_empty());
         finish(
             &self.meta(),
-            judge_timezone(&ctx.platform.timezone, browser.as_deref(), ip_tz.as_deref(), &ctx.region),
+            if ctx.platform.os == "windows" {
+                judge::judge_windows_timezone(&ctx.platform.timezone, ctx.platform.windows_territory.as_deref(), browser.as_deref(), ip_tz.as_deref(), &ctx.region)
+            } else { judge_timezone(&ctx.platform.timezone, browser.as_deref(), ip_tz.as_deref(), &ctx.region) },
         )
     }
 }
@@ -394,6 +414,8 @@ impl EnvironmentCheck for Fingerprint {
                 judge_fingerprint(&ctx.platform.os, "", "", false, "", &ctx.platform.timezone, &[], &ctx.platform.locale, true),
             );
         };
+        let mapped = if ctx.platform.os == "windows" { parse::windows_to_iana(&ctx.platform.timezone, ctx.platform.windows_territory.as_deref().or(Some(&ctx.region.country))) } else { vec![ctx.platform.timezone.clone()] };
+        let system_timezone = mapped.iter().find(|tz| parse::canon_tz(tz)==parse::canon_tz(&payload.timezone)).or_else(|| mapped.first()).map(String::as_str).unwrap_or("");
         finish(
             &self.meta(),
             judge_fingerprint(
@@ -402,7 +424,7 @@ impl EnvironmentCheck for Fingerprint {
                 &payload.platform,
                 payload.webdriver,
                 &payload.timezone,
-                &ctx.platform.timezone,
+                system_timezone,
                 &payload.languages,
                 &ctx.platform.locale,
                 false,
@@ -493,6 +515,7 @@ mod tests {
 
     fn empty_snapshot() -> platform::PlatformSnapshot {
         platform::PlatformSnapshot {
+            windows_territory: None, windows_routes: vec![],
             dns_blocks: Vec::new(),
             os: "linux".into(), timezone: String::new(), locale: String::new(),
             dns_servers: Vec::new(), route_v4_a: None, route_v4_b: None,
@@ -526,6 +549,23 @@ mod tests {
             let result = check.detect(&ctx).await;
             assert_eq!(result.status, Status::Inconclusive, "{key}");
             assert_eq!(result.observed.get("collectionError"), ctx.platform.errors.get(key));
+        }
+    }
+
+    #[tokio::test]
+    async fn policy_without_plain_dns_never_passes_or_selects_adapter_servers() {
+        for namespace in [".", ".claude.ai"] {
+            let mut snapshot = empty_snapshot();
+            snapshot.dns_blocks = platform::windows_parse::dns_blocks(&[], &[], &[], &[
+                serde_json::json!({"Namespace":namespace,"DirectAccessEnabled":true})]);
+            snapshot.dns_blocks.push(parse::ResolverBlock { nameservers: vec!["8.8.8.8".into()], ..Default::default() });
+            assert!(parse::resolvers_for_host(&snapshot.dns_blocks, "claude.ai").iter().flat_map(|b| &b.nameservers).next().is_none());
+            snapshot.dns_servers = platform::windows_parse::effective_servers(&snapshot.dns_blocks);
+            let ctx = ScanContext::new(region::find("us").unwrap().clone(), snapshot, Arc::new(NullDirectory),
+                Arc::new(StdMutex::new(None::<BrowserPayload>)), "test".into(), "http://127.0.0.1/".into(), false);
+            let result = DnsConfigured.detect(&ctx).await;
+            assert_eq!(result.status, Status::Inconclusive);
+            assert_eq!(result.observed.get("claude.ai").map(String::as_str), Some("NRPT policy without plain DNS servers"));
         }
     }
 
