@@ -65,7 +65,7 @@ fn reopen_browser(state: tauri::State<'_, AppState>) -> Result<String, String> {
     let url = hub.url.clone();
     let opened = browser::open_url(&url);
     if opened {
-        Ok(url)
+        Ok(hub.public_url())
     } else {
         Err(format!("Could not open the browser. The page is at {url}"))
     }

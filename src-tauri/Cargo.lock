@@ -24,6 +24,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "futures",
+ "getrandom 0.3.4",
  "rustls",
  "rustls-native-certs",
  "serde",

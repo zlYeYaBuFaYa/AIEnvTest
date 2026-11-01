@@ -32,14 +32,14 @@ pub async fn fetch(raw_url: &str, family: Option<Family>, budget: Duration) -> R
             .await
             .map_err(|_| "timeout".to_string())?
             .map_err(|err| err)?;
-        if matches!(response.status, 301 | 302 | 307 | 308) {
+        if matches!(response.status, 301 | 302 | 303 | 307 | 308) {
             if let Some(location) = response.body.lines().find_map(|line| {
                 let line = line.trim();
                 line.strip_prefix("location:")
                     .or_else(|| line.strip_prefix("Location:"))
                     .map(|value| value.trim().to_string())
             }) {
-                current = resolve_location(&current, &location);
+                current = resolve_location(&current, &location)?;
                 continue;
             }
         }
@@ -48,18 +48,32 @@ pub async fn fetch(raw_url: &str, family: Option<Family>, budget: Duration) -> R
     Err("too many redirects".into())
 }
 
-fn resolve_location(base: &str, location: &str) -> String {
-    if location.starts_with("http://") || location.starts_with("https://") {
-        location.to_string()
-    } else if let Ok(base) = Url::parse(base) {
-        base.join(location).map(|url| url.to_string()).unwrap_or_else(|_| location.to_string())
-    } else {
-        location.to_string()
+pub async fn fetch_https(raw_url: &str, family: Option<Family>, budget: Duration) -> Result<Response, String> {
+    require_https(raw_url)?;
+    fetch(raw_url, family, budget).await
+}
+
+fn require_https(raw_url: &str) -> Result<(), String> {
+    let url = Url::parse(raw_url).map_err(|err| err.to_string())?;
+    if url.scheme() != "https" { return Err("HTTPS required".into()); }
+    Ok(())
+}
+
+fn resolve_location(base: &str, location: &str) -> Result<String, String> {
+    let base = Url::parse(base).map_err(|err| err.to_string())?;
+    let target = base.join(location).map_err(|err| err.to_string())?;
+    if !matches!(target.scheme(), "http" | "https") {
+        return Err("unsupported redirect scheme".into());
     }
+    if base.scheme() == "https" && target.scheme() != "https" {
+        return Err("HTTPS redirect downgrade refused".into());
+    }
+    Ok(target.to_string())
 }
 
 async fn fetch_once(raw_url: &str, family: Option<Family>) -> Result<Response, String> {
     let url = Url::parse(raw_url).map_err(|err| err.to_string())?;
+    if !matches!(url.scheme(), "http" | "https") { return Err("unsupported URL scheme".into()); }
     let https = url.scheme() == "https";
     let host = url.host_str().ok_or("missing host")?.to_string();
     let port = url.port_or_known_default().unwrap_or(if https { 443 } else { 80 });
@@ -176,7 +190,7 @@ fn parse_http(bytes: &[u8]) -> Result<Response, String> {
     });
     let body_bytes = if chunked { decode_chunks(raw_body) } else { raw_body.to_vec() };
     let body = String::from_utf8_lossy(&body_bytes).to_string();
-    if matches!(status, 301 | 302 | 307 | 308) {
+    if matches!(status, 301 | 302 | 303 | 307 | 308) {
         let location = head.lines().find_map(|line| {
             let lower = line.to_lowercase();
             lower.strip_prefix("location:").map(|_| line.split_once(':').map(|(_, value)| value.trim().to_string())).flatten()
@@ -211,4 +225,21 @@ fn decode_chunks(mut bytes: &[u8]) -> Vec<u8> {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn redirects_cannot_downgrade_https() {
+        assert!(resolve_location("https://example.com/a", "http://example.com/b").is_err());
+        assert!(resolve_location("https://example.com/a", "HTTP://example.com/b").is_err());
+        assert!(resolve_location("https://example.com/a", "file:///tmp/data").is_err());
+        assert_eq!(resolve_location("https://example.com/a", "/b").unwrap(), "https://example.com/b");
+        assert_eq!(resolve_location("https://example.com/a", "//other.example/b").unwrap(), "https://other.example/b");
+        assert_eq!(resolve_location("https://example.com/a", "https://other.example/b").unwrap(), "https://other.example/b");
+        assert!(require_https("http://example.com").is_err());
+        assert!(require_https("https://example.com").is_ok());
+    }
 }

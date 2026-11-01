@@ -4,9 +4,15 @@ use serde_json::Value;
 use crate::net::{dns, http::{self, Family}};
 use crate::platform::parse::{self, is_private_ip};
 
+const IPINFO_EXIT: &str = "https://ipinfo.io/json";
+const IPINFO_BASE: &str = "https://ipinfo.io/";
+const IPWHOIS_BASE: &str = "https://ipwho.is/";
+const BASH_ID: &str = "https://bash.ws/id";
+const BASH_TEST_BASE: &str = "https://bash.ws/dnsleak/test/";
+
 /// Public IP, DNS-leak, and EDNS client-subnet lookups.
 ///
-/// [`PublicDirectory`] talks to ipinfo.io, ip-api.com, bash.ws, and Google's
+/// [`PublicDirectory`] talks to ipinfo.io, ipwho.is, bash.ws, and Google's
 /// `o-o.myaddr` TXT name. A later self-hosted directory can implement the same
 /// trait and replace it without touching the checks.
 #[async_trait]
@@ -61,7 +67,7 @@ impl NetworkDirectory for PublicDirectory {
         if let Ok(facts) = exit_from_ipinfo(family).await {
             return Ok(facts);
         }
-        exit_from_ip_api(family).await
+        exit_from_ipwhois(family).await
     }
 
     async fn dns_leak(&self, resolvers: &[String]) -> LeakReport {
@@ -107,27 +113,30 @@ impl NetworkDirectory for NullDirectory {
 }
 
 async fn exit_from_ipinfo(family: Family) -> Result<IpFacts, String> {
-    let response = http::fetch("https://ipinfo.io/json", Some(family), std::time::Duration::from_secs(10)).await?;
-    if response.status >= 400 {
+    let response = http::fetch_https(IPINFO_EXIT, Some(family), std::time::Duration::from_secs(10)).await?;
+    if !(200..300).contains(&response.status) {
         return Err(format!("ipinfo status {}", response.status));
     }
     parse_ipinfo(&response.body)
 }
 
-async fn exit_from_ip_api(family: Family) -> Result<IpFacts, String> {
-    let response = http::fetch(
-        "http://ip-api.com/json/?fields=status,message,country,countryCode,regionName,city,timezone,isp,org,as,query,hosting,proxy",
+async fn exit_from_ipwhois(family: Family) -> Result<IpFacts, String> {
+    let response = http::fetch_https(
+        IPWHOIS_BASE,
         Some(family),
         std::time::Duration::from_secs(10),
     )
     .await?;
-    parse_ip_api(&response.body)
+    if !(200..300).contains(&response.status) { return Err(format!("ipwho.is status {}", response.status)); }
+    parse_ipwhois(&response.body)
 }
 
 async fn lookup_ip(ip: &str) -> Result<IpFacts, String> {
-    let ipinfo = format!("https://ipinfo.io/{ip}/json");
-    if let Ok(response) = http::fetch(&ipinfo, None, std::time::Duration::from_secs(8)).await {
-        if response.status < 400 {
+    let ip: std::net::IpAddr = ip.parse().map_err(|_| "invalid IP address".to_string())?;
+    let ip = ip.to_string();
+    let ipinfo = format!("{IPINFO_BASE}{ip}/json");
+    if let Ok(response) = http::fetch_https(&ipinfo, None, std::time::Duration::from_secs(8)).await {
+        if (200..300).contains(&response.status) {
             if let Ok(mut facts) = parse_ipinfo(&response.body) {
                 if facts.ip.is_empty() {
                     facts.ip = ip.to_string();
@@ -136,11 +145,10 @@ async fn lookup_ip(ip: &str) -> Result<IpFacts, String> {
             }
         }
     }
-    let url = format!(
-        "http://ip-api.com/json/{ip}?fields=status,message,country,countryCode,regionName,city,timezone,isp,org,as,query,hosting,proxy"
-    );
-    let response = http::fetch(&url, None, std::time::Duration::from_secs(8)).await?;
-    let mut facts = parse_ip_api(&response.body)?;
+    let url = format!("{IPWHOIS_BASE}{ip}");
+    let response = http::fetch_https(&url, None, std::time::Duration::from_secs(8)).await?;
+    if !(200..300).contains(&response.status) { return Err(format!("ipwho.is status {}", response.status)); }
+    let mut facts = parse_ipwhois(&response.body)?;
     if facts.ip.is_empty() {
         facts.ip = ip.to_string();
     }
@@ -149,7 +157,7 @@ async fn lookup_ip(ip: &str) -> Result<IpFacts, String> {
 
 fn parse_ipinfo(body: &str) -> Result<IpFacts, String> {
     let value: Value = serde_json::from_str(body).map_err(|err| err.to_string())?;
-    if value.get("error").is_some() || value.get("country").is_none() {
+    if value.get("error").is_some() || text(&value, "country").is_empty() {
         return Err("ipinfo did not return a country".into());
     }
     Ok(IpFacts {
@@ -164,31 +172,30 @@ fn parse_ipinfo(body: &str) -> Result<IpFacts, String> {
     })
 }
 
-fn parse_ip_api(body: &str) -> Result<IpFacts, String> {
+fn parse_ipwhois(body: &str) -> Result<IpFacts, String> {
     let value: Value = serde_json::from_str(body).map_err(|err| err.to_string())?;
-    if value.get("status").and_then(|s| s.as_str()) == Some("fail") {
-        return Err(text(&value, "message"));
+    if value.get("success").and_then(Value::as_bool) != Some(true) {
+        return Err(format!("ipwho.is lookup failed: {}", text(&value, "message")));
     }
-    let country = {
-        let code = text(&value, "countryCode");
-        if code.is_empty() { parse::norm_country(&text(&value, "country")) } else { parse::norm_country(&code) }
-    };
-    if country.is_empty() {
-        return Err("ip-api did not return a country".into());
+    let country = parse::norm_country(&text(&value, "country_code"));
+    if country.is_empty() { return Err("ipwho.is did not return a country".into()); }
+    let connection = &value["connection"];
+    let mut org = text(connection, "org");
+    if org.is_empty() { org = text(connection, "isp"); }
+    if org.is_empty() {
+        if let Some(asn) = connection.get("asn").and_then(Value::as_u64) {
+            org = format!("AS{asn}");
+        }
     }
-    let org = {
-        let org = text(&value, "org");
-        if org.is_empty() { text(&value, "as") } else { org }
-    };
     Ok(IpFacts {
-        ip: text(&value, "query"),
+        ip: text(&value, "ip"),
         country,
-        region: text(&value, "regionName"),
+        region: text(&value, "region"),
         city: text(&value, "city"),
-        org: if org.is_empty() { text(&value, "isp") } else { org },
-        timezone: text(&value, "timezone"),
-        hosting: value.get("hosting").and_then(|v| v.as_bool()),
-        source: "ip-api.com".into(),
+        org,
+        timezone: text(&value["timezone"], "id"),
+        hosting: None,
+        source: "ipwho.is".into(),
     })
 }
 
@@ -197,7 +204,7 @@ fn text(value: &Value, key: &str) -> String {
 }
 
 async fn bash_ws_leak(resolvers: &[String]) -> Option<LeakReport> {
-    let response = http::fetch("https://bash.ws/id", None, std::time::Duration::from_secs(8)).await.ok()?;
+    let response = http::fetch_https(BASH_ID, None, std::time::Duration::from_secs(8)).await.ok()?;
     let id: String = response.body.chars().filter(|c| c.is_ascii_digit()).collect();
     if id.is_empty() {
         return None;
@@ -209,8 +216,8 @@ async fn bash_ws_leak(resolvers: &[String]) -> Option<LeakReport> {
         std::thread::sleep(std::time::Duration::from_millis(1200));
     })
     .await;
-    let url = format!("https://bash.ws/dnsleak/test/{id}?json=2");
-    let response = http::fetch(&url, None, std::time::Duration::from_secs(12)).await.ok()?;
+    let url = format!("{BASH_TEST_BASE}{id}?json=2");
+    let response = http::fetch_https(&url, None, std::time::Duration::from_secs(12)).await.ok()?;
     let value: Value = serde_json::from_str(&response.body).ok()?;
     let rows = value.as_array()?;
     let mut hits = Vec::new();
@@ -285,4 +292,51 @@ fn google_txt(resolvers: &[String]) -> Vec<String> {
         }
     }
     Vec::new()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn intel_sources_are_https() {
+        for url in [IPINFO_EXIT, IPINFO_BASE, IPWHOIS_BASE, BASH_ID, BASH_TEST_BASE] {
+            assert!(url.starts_with("https://"), "insecure source: {url}");
+        }
+    }
+
+    #[test]
+    fn parses_ipwhois() {
+        let sample = r#"{
+            "ip":"8.8.8.8", "success":true, "type":"IPv4",
+            "country":"United States", "country_code":"US",
+            "region":"California", "city":"Mountain View",
+            "connection":{"asn":15169,"org":"Google LLC","isp":"Google LLC"},
+            "timezone":{"id":"America/Los_Angeles","utc":"-07:00"}
+        }"#;
+        let facts = parse_ipwhois(sample).unwrap();
+        assert_eq!(facts.ip, "8.8.8.8");
+        assert_eq!(facts.country, "US");
+        assert_eq!(facts.region, "California");
+        assert_eq!(facts.city, "Mountain View");
+        assert_eq!(facts.org, "Google LLC");
+        assert_eq!(facts.timezone, "America/Los_Angeles");
+        assert_eq!(facts.source, "ipwho.is");
+        assert_eq!(facts.hosting, None);
+    }
+
+    #[test]
+    fn rejects_unsuccessful_ipwhois() {
+        assert!(parse_ipwhois(r#"{"success":false,"message":"Invalid IP address"}"#).is_err());
+        assert!(parse_ipwhois(r#"{"success":true,"country_code":""}"#).is_err());
+        assert!(parse_ipwhois(r#"{"country_code":"US"}"#).is_err());
+    }
+
+    #[test]
+    fn ipwhois_org_fallbacks() {
+        let facts = parse_ipwhois(r#"{"success":true,"country_code":"US","connection":{"isp":"Example ISP","asn":123}}"#).unwrap();
+        assert_eq!(facts.org, "Example ISP");
+        let facts = parse_ipwhois(r#"{"success":true,"country_code":"US","connection":{"asn":123}}"#).unwrap();
+        assert_eq!(facts.org, "AS123");
+    }
 }

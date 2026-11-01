@@ -30,7 +30,7 @@ pub async fn execute(region_id: &str) -> Result<PreparedScan, String> {
         Arc::new(PublicDirectory),
         hub.slot.clone(),
         scan_id,
-        hub.url.clone(),
+        hub.public_url(),
         opened,
     );
     let checks = checks::all();
