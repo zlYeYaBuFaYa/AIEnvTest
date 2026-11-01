@@ -9,6 +9,8 @@ mod windows;
 
 #[derive(Debug, Clone)]
 pub struct ProxySnapshot {
+    pub sources: std::collections::BTreeMap<String,String>,
+    pub wpad: bool,
     pub enabled: bool,
     pub pac: bool,
     pub pac_url: String,
@@ -20,6 +22,7 @@ pub struct ProxySnapshot {
 
 #[derive(Debug, Clone)]
 pub struct PlatformSnapshot {
+    pub dns_blocks: Vec<parse::ResolverBlock>,
     pub errors: std::collections::BTreeMap<String, String>,
     pub os: String,
     pub timezone: String,
@@ -49,6 +52,7 @@ pub fn collect() -> PlatformSnapshot {
     #[allow(unreachable_code)]
     {
         PlatformSnapshot {
+            dns_blocks: Vec::new(),
             errors: Default::default(),
             os: std::env::consts::OS.to_string(),
             timezone: String::new(),
@@ -58,6 +62,7 @@ pub fn collect() -> PlatformSnapshot {
             route_v4_b: None,
             route_v6: Ipv6Route::Unknown("unsupported platform".into()),
             proxy: ProxySnapshot {
+            sources: Default::default(), wpad: false,
                 enabled: false,
                 pac: false,
                 pac_url: String::new(),
@@ -85,7 +90,7 @@ pub enum CollectError {
     NotFound,
     #[error("collection timed out")]
     Timeout,
-    #[error("exit {code:?}: {stderr} (stdout: {stdout})")]
+    #[error("exit {}: {stderr} (stdout: {stdout})", code.map(|value| value.to_string()).unwrap_or_else(|| "unknown".into()))]
     NonZeroExit { code: Option<i32>, stderr: String, stdout: String },
     #[error("{0}")]
     Io(String),

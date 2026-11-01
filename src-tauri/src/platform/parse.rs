@@ -572,60 +572,58 @@ pub fn parse_scutil_proxy(text: &str) -> (bool, bool, Vec<String>, Option<String
     (enabled, pac, bypass, pac_url)
 }
 
-pub fn parse_scutil_dns(text: &str, want_iface: Option<&str>) -> Vec<String> {
-    let mut blocks: Vec<Vec<String>> = Vec::new();
-    let mut current: Vec<String> = Vec::new();
-    let flush = |block: &mut Vec<String>, blocks: &mut Vec<Vec<String>>| {
-        if !block.is_empty() {
-            blocks.push(std::mem::take(block));
-        }
-    };
+#[derive(Debug, Clone, Default)]
+pub struct ResolverBlock {
+    pub domains: Vec<String>, pub nameservers: Vec<String>, pub iface: String,
+    pub order: Option<u32>, pub scoped: bool, pub section_scoped: bool, pub supplemental: bool, pub mdns: bool,
+}
+pub fn parse_resolver_blocks(text: &str) -> Vec<ResolverBlock> {
+    let mut blocks = Vec::new();
+    let mut current: Option<ResolverBlock> = None;
+    let mut section_scoped = false;
     for line in text.lines() {
-        if line.starts_with("resolver #") {
-            flush(&mut current, &mut blocks);
+        let t = line.trim();
+        if t.starts_with("DNS configuration") {
+            if let Some(b) = current.take() { blocks.push(b); }
+            section_scoped = t.contains("(for scoped queries)");
             continue;
         }
-        current.push(line.to_string());
+        if t.starts_with("resolver #") {
+            if let Some(b) = current.take() { blocks.push(b); }
+            current = Some(ResolverBlock { section_scoped, ..Default::default() }); continue;
+        }
+        let Some(b) = current.as_mut() else { continue };
+        let Some((key,value)) = t.split_once(':') else { continue };
+        let (key,value) = (key.trim(), value.trim());
+        if key == "domain" || key.starts_with("search domain") { b.domains.push(value.trim_end_matches('.').to_lowercase()); }
+        if key.starts_with("nameserver[") { b.nameservers.push(value.into()); }
+        if key == "order" { b.order = value.parse().ok(); }
+        if key == "if_index" { b.iface = value.split_once('(').and_then(|(_,v)| v.split_once(')')).map(|(v,_)| v).unwrap_or("").into(); }
+        if key == "flags" { let v=value.to_lowercase(); b.scoped=v.contains("scoped"); b.supplemental=v.contains("supplemental"); }
+        if key == "options" { b.mdns=value.contains("mdns"); }
     }
-    flush(&mut current, &mut blocks);
-    let mut servers = Vec::new();
-    for block in blocks {
-        let mut mdns = false;
-        let mut domain = false;
-        let mut iface = String::new();
-        let mut nameservers = Vec::new();
-        for line in &block {
-            let trimmed = line.trim();
-            if trimmed.starts_with("options") && trimmed.contains("mdns") {
-                mdns = true;
-            }
-            if trimmed.starts_with("domain") {
-                domain = true;
-            }
-            if trimmed.starts_with("if_index") {
-                if let Some(start) = trimmed.find('(') {
-                    if let Some(end) = trimmed.find(')') {
-                        iface = trimmed[start + 1..end].to_string();
-                    }
-                }
-            }
-            if trimmed.starts_with("nameserver[") {
-                if let Some((_, ip)) = trimmed.split_once(':') {
-                    nameservers.push(ip.trim().to_string());
-                }
-            }
-        }
-        if mdns || domain {
-            continue;
-        }
-        if let Some(want) = want_iface {
-            if !want.is_empty() && !iface.is_empty() && iface != want {
-                continue;
-            }
-        }
-        servers.extend(nameservers);
-    }
-    servers.into_iter().filter(|ip| !is_ignored_dns(ip)).collect()
+    if let Some(b)=current { blocks.push(b); }
+    blocks
+}
+pub fn resolvers_for_host<'a>(blocks: &'a [ResolverBlock], host: &str) -> Vec<&'a ResolverBlock> {
+    let host=host.trim_end_matches('.').to_lowercase();
+    let specificity = |b: &ResolverBlock| b.domains.iter().filter(|d| host==**d || host.ends_with(&format!(".{d}"))).map(String::len).max().unwrap_or(0);
+    let candidates: Vec<_> = blocks.iter().filter(|b| !b.mdns && !b.scoped && !b.section_scoped && !b.nameservers.is_empty()).collect();
+    let best=candidates.iter().map(|b| specificity(b)).max().unwrap_or(0);
+    let selected: Vec<_> = candidates.into_iter().filter(|b| if best>0 { specificity(b)==best } else { b.domains.is_empty() }).collect();
+    let order=selected.iter().map(|b| b.order.unwrap_or(u32::MAX)).min();
+    selected.into_iter().filter(|b| Some(b.order.unwrap_or(u32::MAX))==order).collect()
+}
+pub fn parse_scutil_dns(text: &str, _want_iface: Option<&str>) -> Vec<String> {
+    dedup_keep(parse_resolver_blocks(text).into_iter().filter(|b| !b.mdns && !b.scoped && !b.section_scoped).flat_map(|b| b.nameservers).filter(|ip| !is_ignored_dns(ip)).collect())
+}
+/// Disabled WinINET residual values have no effect.
+pub fn parse_windows_proxy(enabled: &str, server: &str) -> (String,String,String) {
+    if !matches!(enabled.trim(), "1" | "0x1" | "0x00000001") { return Default::default(); }
+    if !server.contains('=') { return (server.trim().into(),server.trim().into(),String::new()); }
+    let mut out = (String::new(),String::new(),String::new());
+    for part in server.split(';') { if let Some((k,v))=part.split_once('=') { match k.trim().to_lowercase().as_str() { "http"=>out.0=v.trim().into(), "https"=>out.1=v.trim().into(), "socks"=>out.2=v.trim().into(), _=>{} } } }
+    out
 }
 
 pub fn parse_apple_languages(text: &str) -> Option<String> {
@@ -850,13 +848,6 @@ pub fn corporate_intercept_ca(issuer: &str) -> bool {
     NEEDLES.iter().any(|needle| issuer.contains(needle))
 }
 
-pub fn pac_mentions_claude(body: &str) -> bool {
-    let lower = body.to_lowercase();
-    lower.contains("claude.ai")
-        || lower.contains("anthropic.com")
-        || lower.contains("claude.com")
-}
-
 pub fn os_token_from_ua(ua: &str) -> &'static str {
     let ua = ua.to_lowercase();
     if ua.contains("windows nt") || ua.contains("win64") || ua.contains("win32") {
@@ -1055,7 +1046,6 @@ resolver #2
         assert!(!datacenter_hint("Comcast Cable Communications", Some(false)));
         assert!(known_public_ca("C=US, O=Google Trust Services, CN=WE1"));
         assert!(suspicious_intercept_ca("O=mitmproxy, CN=mitmproxy"));
-        assert!(pac_mentions_claude("if (host == \"claude.ai\") return \"DIRECT\";"));
     }
 
     #[test]
@@ -1071,5 +1061,67 @@ resolver #2
         assert!(!tz_allowed("Asia/Shanghai", &["America/New_York".into()]));
         assert!(platform_matches_os("linux", "Linux x86_64", "Mozilla/5.0 (X11; Linux x86_64)"));
         assert!(!platform_matches_os("linux", "Win32", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"));
+    }
+}
+
+#[cfg(test)] mod feature4_tests {
+    use super::*;
+    #[test] fn scoped_resolver_selection() {
+        let sample = "DNS configuration
+resolver #1
+ nameserver[0] : 1.1.1.1
+ order : 200000
+resolver #2
+ domain : claude.ai
+ nameserver[0] : 223.5.5.5
+ if_index : 8 (utun3)
+ flags : Supplemental, Request A records
+ order : 101800
+resolver #3
+ domain : anthropic.com
+ nameserver[0] : 10.0.0.1
+ flags : Supplemental, Request A records
+ order : 102000
+resolver #4
+ domain : local
+ options : mdns
+ nameserver[0] : 224.0.0.251
+resolver #5
+ domain : claude.ai
+ nameserver[0] : 9.9.9.9
+ flags : Scoped, Request A records
+ order : 1
+
+DNS configuration (for scoped queries)
+resolver #1
+ nameserver[0] : 192.168.1.1
+ if_index : 4 (en0)
+ flags : Scoped, Request A records
+ order : 100
+resolver #2
+ domain : claude.ai
+ nameserver[0] : 192.168.1.2
+ if_index : 4 (en0)
+ order : 1
+";
+        let blocks=parse_resolver_blocks(sample);
+        assert!(blocks[1].supplemental);
+        assert!(blocks[4].scoped);
+        assert!(blocks[5].section_scoped && blocks[6].section_scoped);
+        assert_eq!(resolvers_for_host(&blocks,"claude.ai")[0].nameservers,vec!["223.5.5.5"]);
+        assert_eq!(resolvers_for_host(&blocks,"api.anthropic.com")[0].nameservers,vec!["10.0.0.1"]);
+        assert_eq!(resolvers_for_host(&blocks,"notclaude.ai")[0].nameservers,vec!["1.1.1.1"]);
+        assert_eq!(parse_scutil_dns(sample,None), vec!["1.1.1.1", "223.5.5.5", "10.0.0.1"]);
+        let mut blocks = blocks;
+        blocks.push(ResolverBlock { domains: vec!["api.claude.ai".into()], nameservers: vec!["8.8.8.8".into()], supplemental: true, order: Some(300000), ..Default::default() });
+        blocks.push(ResolverBlock { domains: vec!["claude.ai".into()], nameservers: vec!["8.8.4.4".into()], supplemental: true, order: Some(101900), ..Default::default() });
+        assert_eq!(resolvers_for_host(&blocks,"api.claude.ai")[0].nameservers,vec!["8.8.8.8"]);
+        assert_eq!(resolvers_for_host(&blocks,"claude.ai")[0].nameservers,vec!["223.5.5.5"]);
+    }
+
+    #[test] fn wininet_enable_and_protocols() {
+        assert_eq!(parse_windows_proxy("0x0","old:80"),Default::default());
+        assert_eq!(parse_windows_proxy("1","http=h:80;https=s:443;socks=t:1080"),("h:80".into(),"s:443".into(),"t:1080".into()));
+        assert_eq!(parse_windows_proxy("0x1","h:80"),("h:80".into(),"h:80".into(),"".into()));
     }
 }

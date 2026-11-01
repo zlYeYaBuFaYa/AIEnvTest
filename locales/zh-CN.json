@@ -235,5 +235,12 @@
   "v6.exitMismatch": "观测到的 IPv6 出口位于 {country}，与预期的{expected}不符。",
   "collection.unavailable": "无法收集系统信息。",
   "advice.collection.retry": "请检查系统访问权限，然后重新扫描。",
-  "route.physicalUnmeasured": "公网 IPv4 流量走的是物理网卡 {iface}，但无法测出出口所在国家，因此无法判断这条路由。"
+  "route.physicalUnmeasured": "公网 IPv4 流量走的是物理网卡 {iface}，但无法测出出口所在国家，因此无法判断这条路由。",
+  "proxy.pacDirect": "PAC 将 Claude 流量直接连接。",
+  "proxy.pacDirectTunnel": "PAC 将 Claude 设为直连，但系统路由经过隧道。",
+  "proxy.pacProxy": "PAC 将 Claude 流量通过代理发送。",
+  "proxy.pacUnknown": "无法确定 PAC 的实际路由。",
+  "leak.configWarning": "配置 DNS 探测发现中国大陆出口；尚未确认系统解析路径。",
+  "dns.scopedCn": "Claude 域名选择了中国大陆 DNS 解析器。",
+  "dns.scopedInfo": "目标域名使用专用 DNS 解析器，请查看观测详情。"
 }

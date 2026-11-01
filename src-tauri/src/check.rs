@@ -52,7 +52,10 @@ pub enum PhaseError {
     Failed(String),
 }
 
-pub fn finish(meta: &CheckMeta, judgement: Judgement) -> CheckResult {
+pub fn finish(meta: &CheckMeta, mut judgement: Judgement) -> CheckResult {
+    for map in [&mut judgement.observed, &mut judgement.expected, &mut judgement.summary_params, &mut judgement.advice_params] {
+        for value in map.values_mut() { *value = crate::redact::redact_text(value); }
+    }
     CheckResult {
         id: meta.id.to_string(),
         category: meta.category.to_string(),

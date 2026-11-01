@@ -8,6 +8,7 @@ pub fn collect() -> PlatformSnapshot {
     let route_v4_a = route_v4("1.1.1.1");
     let route_v4_b = route_v4("8.8.8.8");
     PlatformSnapshot {
+            dns_blocks: Vec::new(),
         os: "windows".into(),
         timezone: timezone(),
         locale: locale(),
@@ -73,22 +74,30 @@ fn dns_servers() -> Vec<String> {
 }
 
 fn proxy() -> ProxySnapshot {
-    let enable = reg("ProxyEnable").unwrap_or_default();
-    let server = reg("ProxyServer").unwrap_or_default();
-    let bypass_raw = reg("ProxyOverride").unwrap_or_default();
-    let pac_url = reg("AutoConfigURL").unwrap_or_default();
-    let mut bypass = parse::split_bypass_list(&bypass_raw);
-    bypass.extend(env_bypass());
-    let enabled = enable.trim() == "0x1" || enable.trim() == "1" || !server.trim().is_empty();
-    ProxySnapshot {
-        enabled: enabled || !env_proxy(&["http_proxy", "https_proxy", "all_proxy"]).is_empty(),
-        pac: !pac_url.trim().is_empty(),
-        pac_url: pac_url.trim().to_string(),
-        bypass: dedup_keep(bypass),
-        http_proxy: if server.trim().is_empty() { env_proxy(&["http_proxy", "HTTP_PROXY"]) } else { server.trim().to_string() },
-        https_proxy: env_proxy(&["https_proxy", "HTTPS_PROXY"]),
-        socks_proxy: env_proxy(&["all_proxy", "ALL_PROXY"]),
-    }
+    // Read optional registry properties in one successful collection: absent values
+    // are normal, while failure to read the settings remains a collection error.
+    let raw = powershell("proxy", r"$ErrorActionPreference='Stop'; Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings' | Select-Object ProxyEnable,ProxyServer,ProxyOverride,AutoConfigURL,AutoDetect | ConvertTo-Json -Compress").unwrap_or_default();
+    let settings: serde_json::Value = serde_json::from_str(&raw).unwrap_or_else(|e| {
+        super::record("proxy", &super::CollectError::Io(format!("invalid proxy settings: {e}")));
+        serde_json::Value::Null
+    });
+    let value = |name: &str| settings[name].as_str().map(str::to_owned).or_else(|| settings[name].as_u64().map(|n| n.to_string())).unwrap_or_default();
+    let enable=value("ProxyEnable");
+    let server=value("ProxyServer");
+    let bypass_raw=value("ProxyOverride");
+    let pac_url=value("AutoConfigURL");
+    let wpad=value("AutoDetect")=="1";
+    let manual = parse::parse_windows_proxy(&enable, &server);
+    let env = (env_proxy(&["http_proxy","HTTP_PROXY"]), env_proxy(&["https_proxy","HTTPS_PROXY"]), env_proxy(&["all_proxy","ALL_PROXY"]));
+    let mut sources = std::collections::BTreeMap::new();
+    for (key,value) in [("wininet.http",&manual.0),("wininet.https",&manual.1),("wininet.socks",&manual.2),("env.http",&env.0),("env.https",&env.1),("env.all",&env.2),("pac",&pac_url)] { if !value.is_empty() { sources.insert(key.into(),value.clone()); } }
+    let enabled = [&manual.0,&manual.1,&manual.2,&env.0,&env.1,&env.2].iter().any(|v| !v.is_empty());
+    let mut bypass = if manual.0.is_empty() && manual.1.is_empty() && manual.2.is_empty() { vec![] } else { parse::split_bypass_list(&bypass_raw) };
+    if [&env.0,&env.1,&env.2].iter().any(|v| !v.is_empty()) { bypass.extend(env_bypass()); }
+    ProxySnapshot { sources, wpad, enabled, pac: !pac_url.is_empty(), pac_url, bypass: dedup_keep(bypass),
+        http_proxy: if !env.0.is_empty() {env.0} else {manual.0},
+        https_proxy: if !env.1.is_empty() {env.1} else {manual.1},
+        socks_proxy: if !env.2.is_empty() {env.2} else {manual.2} }
 }
 
 fn hosts() -> Result<String, super::CollectError> {
@@ -113,29 +122,4 @@ fn location_enabled() -> Option<bool> {
 
 fn powershell(key: &str, script: &str) -> Option<String> {
     command_stdout(key, "powershell", &["-NoProfile", "-NonInteractive", "-Command", script])
-}
-
-fn reg(name: &str) -> Option<String> {
-    let text = command_stdout("proxy",
-        "reg",
-        &[
-            "query",
-            "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings",
-            "/v",
-            name,
-        ],
-    )?;
-    for line in text.lines() {
-        let line = line.trim();
-        if line.to_lowercase().starts_with(&name.to_lowercase()) {
-            let mut parts = line.split_whitespace();
-            let _key = parts.next();
-            let _typ = parts.next();
-            let value = parts.collect::<Vec<_>>().join(" ");
-            if !value.is_empty() {
-                return Some(value);
-            }
-        }
-    }
-    None
 }

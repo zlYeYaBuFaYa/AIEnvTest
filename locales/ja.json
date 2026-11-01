@@ -235,5 +235,12 @@
   "v6.exitMismatch": "観測された IPv6 の出口は {country} にあり、想定地域の {expected} と異なります。",
   "collection.unavailable": "システム情報を収集できませんでした。",
   "advice.collection.retry": "システムへのアクセス権限を確認してから、再スキャンしてください。",
-  "route.physicalUnmeasured": "公開 IPv4 トラフィックは物理インターフェイス {iface} を使っていますが、出口の国を測定できなかったため、この経路は判定できません。"
+  "route.physicalUnmeasured": "公開 IPv4 トラフィックは物理インターフェイス {iface} を使っていますが、出口の国を測定できなかったため、この経路は判定できません。",
+  "proxy.pacDirect": "PAC は Claude の通信を直接接続に設定しています。",
+  "proxy.pacDirectTunnel": "PAC は Claude を直接接続に設定していますが、システムルートはトンネルです。",
+  "proxy.pacProxy": "PAC は Claude の通信をプロキシ経由に設定しています。",
+  "proxy.pacUnknown": "PAC の経路を確認できませんでした。",
+  "leak.configWarning": "設定済み DNS の調査で中国本土が観測されました。システムの経路は未確認です。",
+  "dns.scopedCn": "Claude のドメインに中国本土の DNS が選択されています。",
+  "dns.scopedInfo": "ドメイン専用の DNS が選択されています。観測結果を確認してください。"
 }

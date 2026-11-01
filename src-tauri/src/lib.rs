@@ -1,3 +1,5 @@
+mod redact;
+mod pac;
 mod browser;
 mod check;
 mod checks;

@@ -235,5 +235,12 @@
   "v6.exitMismatch": "The observed IPv6 exit is in {country}, not {expected}.",
   "collection.unavailable": "System information could not be collected.",
   "advice.collection.retry": "Check system access permissions, then scan again.",
-  "route.physicalUnmeasured": "Public IPv4 traffic uses the physical interface {iface}, but the exit country could not be measured, so this route cannot be judged."
+  "route.physicalUnmeasured": "Public IPv4 traffic uses the physical interface {iface}, but the exit country could not be measured, so this route cannot be judged.",
+  "proxy.pacDirect": "PAC sends Claude traffic directly.",
+  "proxy.pacDirectTunnel": "PAC sends Claude DIRECT, but the system route is a tunnel.",
+  "proxy.pacProxy": "PAC routes Claude traffic through a proxy.",
+  "proxy.pacUnknown": "PAC routing could not be determined.",
+  "leak.configWarning": "A configured DNS probe observed mainland China; the system path is unconfirmed.",
+  "dns.scopedCn": "A mainland DNS resolver is selected for a Claude domain.",
+  "dns.scopedInfo": "A domain-specific DNS resolver is selected; inspect the observed details."
 }

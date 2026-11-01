@@ -165,7 +165,7 @@ where
         }
         buf.extend_from_slice(&tmp[..n]);
         if buf.len() > 512 * 1024 {
-            break;
+            return Err("HTTP response exceeds 512 KiB limit".into());
         }
     }
     parse_http(&buf)

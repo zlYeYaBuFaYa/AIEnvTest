@@ -10,6 +10,7 @@ pub fn collect() -> PlatformSnapshot {
     let route_v6 = route_v6("2606:4700:4700::1111");
     let dns_iface = route_v4_a.clone().or_else(|| route_v4_b.clone());
     PlatformSnapshot {
+            dns_blocks: Vec::new(),
         os: "linux".into(),
         timezone: timezone(),
         locale: locale(),
@@ -167,6 +168,7 @@ fn proxy() -> ProxySnapshot {
         }
     }
     ProxySnapshot {
+            sources: Default::default(), wpad: false,
         http_proxy: first_nonempty(&[
             env_proxy(&["https_proxy", "HTTPS_PROXY", "http_proxy", "HTTP_PROXY", "all_proxy", "ALL_PROXY"]),
             gsettings_host_port("org.gnome.system.proxy.http"),

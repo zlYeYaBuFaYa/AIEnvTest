@@ -228,7 +228,6 @@ pub struct ProxyView<'a> {
     pub enabled: bool,
     pub pac: bool,
     pub pac_url: &'a str,
-    pub pac_body: Option<&'a str>,
     pub bypass: &'a [String],
     pub route_is_tunnel: bool,
 }
@@ -241,22 +240,7 @@ pub fn judge_proxy(view: ProxyView<'_>) -> Judgement {
             .observe("entry", &hit);
     }
     if view.pac {
-        if let Some(body) = view.pac_body {
-            if parse::pac_mentions_claude(body) {
-                return Judgement::new(
-                    Status::Fail,
-                    "proxy.pacHit",
-                    params(&[("entry", "claude.ai / anthropic.com")]),
-                    "advice.proxy.removeBypass",
-                    params(&[]),
-                )
-                .observe("pac", view.pac_url);
-            }
-            return Judgement::new(Status::Warn, "proxy.pacClean", params(&[("url", view.pac_url)]), "advice.proxy.readPac", params(&[]))
-                .observe("pac", view.pac_url);
-        }
-        return Judgement::new(Status::Warn, "proxy.pacUnread", params(&[("url", view.pac_url)]), "advice.proxy.readPac", params(&[]))
-            .observe("pac", if view.pac_url.is_empty() { "enabled" } else { view.pac_url });
+        return Judgement::new(Status::Inconclusive, "proxy.pacUnknown", params(&[]), "advice.proxy.readPac", params(&[])).observe("pac", view.pac_url);
     }
     if view.enabled {
         return Judgement::new(Status::Pass, "proxy.enabledClean", params(&[]), "advice.proxy.ok", params(&[]))
@@ -339,6 +323,8 @@ pub fn judge_configured_dns(servers: &[DnsServerView], recommended: &[String]) -
 }
 
 pub struct LeakHit {
+    pub path: String,
+    pub resolver: String,
     pub ip: String,
     pub country: String,
     pub city: String,
@@ -346,9 +332,9 @@ pub struct LeakHit {
     pub provider: Option<String>,
 }
 
-pub fn judge_leak(hits: &[LeakHit], inconclusive: bool, preset: &RegionPreset) -> Judgement {
+pub fn judge_leak(hits: &[LeakHit], system_inconclusive: bool, preset: &RegionPreset) -> Judgement {
     let expected = preset.display("en");
-    if hits.is_empty() || inconclusive {
+    if hits.is_empty() {
         return Judgement::new(
             Status::Inconclusive,
             "leak.inconclusive",
@@ -362,7 +348,7 @@ pub fn judge_leak(hits: &[LeakHit], inconclusive: bool, preset: &RegionPreset) -
         .iter()
         .map(|hit| {
             let country = if hit.country.is_empty() { "?" } else { hit.country.as_str() };
-            format!("{} {country} {}", hit.ip, hit.asn)
+            format!("{} via {}: {} {country} {}", hit.path, hit.resolver, hit.ip, hit.asn)
         })
         .collect::<Vec<_>>()
         .join("; ");
@@ -375,7 +361,7 @@ pub fn judge_leak(hits: &[LeakHit], inconclusive: bool, preset: &RegionPreset) -
     )
     .observe("resolvers", &detail)
     .expect("country", &preset.country);
-    let bad = hits.iter().any(|hit| hit.provider.is_some() || is_mainland_china(&hit.country));
+    let bad = hits.iter().any(|hit| hit.path == "system" && (hit.provider.is_some() || is_mainland_china(&hit.country)));
     if bad {
         judgement.status = Status::Fail;
         judgement.summary_key = "leak.fail".into();
@@ -383,7 +369,18 @@ pub fn judge_leak(hits: &[LeakHit], inconclusive: bool, preset: &RegionPreset) -
         judgement.advice_params = params(&[("expected", expected.as_str())]);
         return judgement;
     }
-    let third = hits.iter().any(|hit| {
+    if hits.iter().any(|h| h.path == "configured-server" && (h.provider.is_some() || is_mainland_china(&h.country))) {
+        judgement.status = Status::Warn;
+        judgement.summary_key = "leak.configWarning".into();
+        return judgement;
+    }
+    if system_inconclusive || hits.iter().any(|h| h.path == "system" && h.country.is_empty()) || !hits.iter().any(|h| h.path == "system") {
+        judgement.status = Status::Inconclusive;
+        judgement.summary_key = "leak.inconclusive".into();
+        judgement.advice_key = "advice.leak.retry".into();
+        return judgement;
+    }
+    let third = hits.iter().filter(|h| h.path == "system").any(|hit| {
         let country = parse::norm_country(&hit.country);
         !country.is_empty() && country != preset.country
     });
@@ -819,7 +816,7 @@ pub fn judge_reach(hits: &[ReachHit]) -> Judgement {
         params(&[]),
     )
     .observe("detail", &detail)
-    .observe("classes", hits.iter().map(|h| format!("{}: {:?}", h.host, h.class)).collect::<Vec<_>>().join("; "))
+    .observe("classes", hits.iter().map(|h| format!("{}: {}", h.host, match h.class { ReachClass::Ok => "reachable", ReachClass::Unreachable => "unreachable", ReachClass::RegionDenied => "region denied", ReachClass::RateLimited => "rate limited", ReachClass::ServerError => "server error" })).collect::<Vec<_>>().join("; "))
 }
 
 #[cfg(test)]

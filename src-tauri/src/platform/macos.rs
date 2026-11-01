@@ -8,6 +8,7 @@ pub fn collect() -> PlatformSnapshot {
     let route_v4_a = route_v4("1.1.1.1");
     let route_v4_b = route_v4("8.8.8.8");
     PlatformSnapshot {
+            dns_blocks: parse::parse_resolver_blocks(&command_stdout("dns", "scutil", &["--dns"]).unwrap_or_default()),
         os: "macos".into(),
         timezone: timezone(),
         locale: locale(),
@@ -85,6 +86,7 @@ fn proxy() -> ProxySnapshot {
     let mut bypass = bypass;
     bypass.extend(env_bypass());
     ProxySnapshot {
+            sources: Default::default(), wpad: false,
         enabled: enabled || !env_proxy(&["http_proxy", "https_proxy", "all_proxy"]).is_empty(),
         pac,
         pac_url: pac_url.unwrap_or_default(),

@@ -37,6 +37,8 @@ pub struct IpFacts {
 
 #[derive(Debug, Clone)]
 pub struct ObservedResolver {
+    pub path: String,
+    pub resolver: String,
     pub ip: String,
     pub country: String,
     pub city: String,
@@ -45,14 +47,25 @@ pub struct ObservedResolver {
 
 #[derive(Debug, Clone)]
 pub struct LeakReport {
+    pub config_details: Vec<String>,
     pub hits: Vec<ObservedResolver>,
-    pub inconclusive: bool,
+    pub system_inconclusive: bool,
+    pub config_inconclusive: bool,
 }
 
 #[derive(Debug, Clone)]
-pub struct EcsReport {
-    pub subnet: Option<String>,
-    pub failed: bool,
+pub struct EcsReport { pub results: Vec<ResolverResult> }
+#[derive(Debug, Clone)]
+pub struct ResolverResult { pub resolver: String, pub values: Vec<String>, pub error: Option<String> }
+
+impl ResolverResult {
+    pub fn readable(&self) -> String {
+        let mut parts = Vec::new();
+        if !self.values.is_empty() { parts.push(self.values.join(", ")); }
+        if let Some(error) = &self.error { parts.push(error.clone()); }
+        if parts.is_empty() { parts.push("no answers".into()); }
+        format!("{}: {}", self.resolver, parts.join("; "))
+    }
 }
 
 pub struct PublicDirectory;
@@ -71,26 +84,16 @@ impl NetworkDirectory for PublicDirectory {
     }
 
     async fn dns_leak(&self, resolvers: &[String]) -> LeakReport {
-        if let Some(report) = bash_ws_leak(resolvers).await {
-            if !report.hits.is_empty() {
-                return report;
-            }
-        }
-        fallback_leak(resolvers).await
+        let mut report = bash_ws_leak(resolvers).await.unwrap_or(LeakReport { config_details: vec![], hits: vec![], system_inconclusive: true, config_inconclusive: false });
+        let config = fallback_leak(resolvers).await;
+        report.config_inconclusive = config.config_inconclusive;
+        report.hits.extend(config.hits);
+        report.config_details = config.config_details;
+        report
     }
 
     async fn client_subnet(&self, resolvers: &[String]) -> EcsReport {
-        let resolvers = resolvers.to_vec();
-        let lines = tokio::task::spawn_blocking(move || google_txt(&resolvers))
-            .await
-            .unwrap_or_default();
-        if lines.is_empty() {
-            return EcsReport { subnet: None, failed: true };
-        }
-        EcsReport {
-            subnet: parse::parse_ecs_subnets(&lines).into_iter().next(),
-            failed: false,
-        }
+        EcsReport { results: google_txt(resolvers).await }
     }
 }
 
@@ -105,10 +108,10 @@ impl NetworkDirectory for NullDirectory {
         Err("offline".into())
     }
     async fn dns_leak(&self, _resolvers: &[String]) -> LeakReport {
-        LeakReport { hits: Vec::new(), inconclusive: true }
+        LeakReport { config_details: vec![], hits: Vec::new(), system_inconclusive: true, config_inconclusive: false }
     }
     async fn client_subnet(&self, _resolvers: &[String]) -> EcsReport {
-        EcsReport { subnet: None, failed: true }
+        EcsReport { results: vec![] }
     }
 }
 
@@ -214,12 +217,11 @@ async fn bash_ws_leak(resolvers: &[String]) -> Option<LeakReport> {
         return None;
     }
     let names: Vec<String> = (1..=8).map(|i| format!("{i}.{id}.bash.ws")).collect();
-    let resolvers = resolvers.to_vec();
-    let _ = tokio::task::spawn_blocking(move || {
-        dns::blast(&resolvers, &names);
-        std::thread::sleep(std::time::Duration::from_millis(1200));
-    })
-    .await;
+    let _ = resolvers; // System path must never send packets directly to configured servers.
+    let completed = futures::future::join_all(names.iter().map(|name| async move {
+        tokio::time::timeout(std::time::Duration::from_secs(3), tokio::net::lookup_host((name.as_str(),443))).await.is_ok()
+    })).await.into_iter().all(|v| v);
+    tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
     let url = format!("{BASH_TEST_BASE}{id}?json=2");
     let response = http::fetch_https(&url, None, std::time::Duration::from_secs(12)).await.ok()?;
     let value: Value = serde_json::from_str(&response.body).ok()?;
@@ -239,63 +241,49 @@ async fn bash_ws_leak(resolvers: &[String]) -> Option<LeakReport> {
             continue;
         }
         hits.push(ObservedResolver {
+            path: "system".into(), resolver: "system".into(),
             ip,
             country,
             city: row.get("city_name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
             asn: row.get("asn").and_then(|v| v.as_str()).unwrap_or("").to_string(),
         });
     }
-    Some(LeakReport { inconclusive: hits.is_empty(), hits })
+    Some(LeakReport { config_details: vec![], system_inconclusive: !completed || hits.is_empty(), config_inconclusive: false, hits })
 }
 
 async fn fallback_leak(resolvers: &[String]) -> LeakReport {
-    let resolvers = resolvers.to_vec();
-    let ips = tokio::task::spawn_blocking(move || {
-        let mut ips = Vec::new();
-        for line in google_txt(&resolvers) {
-            let line = line.trim().trim_matches('"').to_string();
-            if line.parse::<std::net::IpAddr>().is_ok() && !is_private_ip(&line) {
-                ips.push(line);
-            }
-        }
-        for server in &resolvers {
-            if let Ok(answers) = dns::query_a(server, "whoami.akamai.net") {
-                for ip in answers {
-                    if !is_private_ip(&ip) {
-                        ips.push(ip);
-                    }
-                }
-            }
-        }
-        ips
-    })
-    .await
-    .unwrap_or_default();
     let mut hits = Vec::new();
-    for ip in ips {
-        if hits.iter().any(|hit: &ObservedResolver| hit.ip == ip) {
-            continue;
+    let rows = google_txt(resolvers).await;
+    let mut incomplete = rows.is_empty();
+    let mut details = Vec::new();
+    for row in rows {
+        details.push(row.readable());
+        incomplete |= row.error.is_some();
+        for ip in row.values.iter().map(|s| s.trim().trim_matches('"')).filter(|s| s.parse::<std::net::IpAddr>().is_ok() && !is_private_ip(s)) {
+            let facts = lookup_ip(ip).await.ok();
+            incomplete |= facts.is_none();
+            hits.push(ObservedResolver { path: "configured-server".into(), resolver: row.resolver.clone(), ip: ip.into(),
+                country: facts.as_ref().map(|f| f.country.clone()).unwrap_or_default(),
+                city: facts.as_ref().map(|f| f.city.clone()).unwrap_or_default(),
+                asn: facts.as_ref().map(|f| f.org.clone()).unwrap_or_default() });
         }
-        let facts = lookup_ip(&ip).await.ok();
-        hits.push(ObservedResolver {
-            country: facts.as_ref().map(|facts| facts.country.clone()).unwrap_or_default(),
-            city: facts.as_ref().map(|facts| facts.city.clone()).unwrap_or_default(),
-            asn: facts.as_ref().map(|facts| facts.org.clone()).unwrap_or_default(),
-            ip,
-        });
     }
-    LeakReport { inconclusive: hits.is_empty(), hits }
+    LeakReport { config_details: details, system_inconclusive: false, config_inconclusive: incomplete || hits.is_empty(), hits }
 }
 
-fn google_txt(resolvers: &[String]) -> Vec<String> {
-    for server in resolvers {
-        if let Ok(lines) = dns::query_txt(server, "o-o.myaddr.l.google.com") {
-            if !lines.is_empty() {
-                return lines;
-            }
+async fn google_txt(resolvers: &[String]) -> Vec<ResolverResult> {
+    // All configured resolvers, with at most four blocking UDP queries in flight.
+    use futures::{stream, StreamExt};
+    stream::iter(resolvers.iter().cloned()).map(|resolver| async move {
+        let server = resolver.clone();
+        let result = tokio::time::timeout(std::time::Duration::from_secs(4), tokio::task::spawn_blocking(move || dns::query_txt(&server, "o-o.myaddr.l.google.com"))).await;
+        match result {
+            Ok(Ok(Ok(values))) => ResolverResult { resolver, values, error: None },
+            Ok(Ok(Err(error))) => ResolverResult { resolver, values: vec![], error: Some(error) },
+            Ok(Err(error)) => ResolverResult { resolver, values: vec![], error: Some(error.to_string()) },
+            Err(_) => ResolverResult { resolver, values: vec![], error: Some("timeout".into()) },
         }
-    }
-    Vec::new()
+    }).buffered(4).collect().await
 }
 
 #[cfg(test)]

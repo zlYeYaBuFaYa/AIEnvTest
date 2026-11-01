@@ -138,6 +138,16 @@ impl EnvironmentCheck for UdpQuic {
     }
 }
 
+fn combine_pac_judgement(base: Judgement, direct: bool, failed: bool, tunnel: bool) -> Judgement {
+    // The initial PAC judgement is unknown until evaluation; retain a bypass failure.
+    if base.status == Status::Fail { return base; }
+    Judgement::new(
+        if direct && tunnel { Status::Warn } else if direct { Status::Fail } else if failed { Status::Inconclusive } else { Status::Pass },
+        if direct && tunnel { "proxy.pacDirectTunnel" } else if direct { "proxy.pacDirect" } else if failed { "proxy.pacUnknown" } else { "proxy.pacProxy" },
+        params(&[]), "advice.proxy.readPac", params(&[]),
+    )
+}
+
 #[async_trait]
 impl EnvironmentCheck for SystemProxy {
     fn meta(&self) -> CheckMeta {
@@ -147,10 +157,13 @@ impl EnvironmentCheck for SystemProxy {
         if let Some(judgement) = collection_failure(&ctx.platform, "proxy", true) {
             return finish(&self.meta(), judgement);
         }
-        let fetched = if ctx.platform.proxy.pac && ctx.platform.proxy.pac_url.starts_with("http") {
+        let fetched = if ctx.platform.proxy.pac && ctx.platform.proxy.pac_url.starts_with("file:") {
+            crate::pac::read_file_url(&ctx.platform.proxy.pac_url).await
+        } else if ctx.platform.proxy.pac && ctx.platform.proxy.pac_url.starts_with("http") {
             http::fetch(&ctx.platform.proxy.pac_url, None, std::time::Duration::from_secs(6))
                 .await
                 .ok()
+                .filter(|response| (200..300).contains(&response.status))
                 .map(|response| response.body)
         } else {
             None
@@ -161,11 +174,34 @@ impl EnvironmentCheck for SystemProxy {
             enabled: ctx.platform.proxy.enabled,
             pac: ctx.platform.proxy.pac,
             pac_url: &ctx.platform.proxy.pac_url,
-            pac_body: fetched.as_deref(),
             bypass: &ctx.platform.proxy.bypass,
             route_is_tunnel: tunnel,
         });
         let mut judgement = judgement;
+        if ctx.platform.proxy.pac {
+            let ips = crate::pac::resolve_targets().await;
+            let mut results = Vec::new();
+            let mut failed = false;
+            let mut direct = false;
+            for (url,host) in crate::pac::TARGETS {
+                let result = if let Some(body) = fetched.as_ref() {
+                    let (body,url,host,ips)=(body.clone(),url.to_string(),host.to_string(),ips.clone());
+                    tokio::task::spawn_blocking(move || crate::pac::evaluate(&body,&url,&host,ips)).await.unwrap_or_else(|e| Err(e.to_string()))
+                } else { Err("PAC fetch failed".into()) };
+                direct |= result.as_ref().is_ok_and(|r| r.first()==Some(&crate::pac::Route::Direct));
+                failed |= result.is_err();
+                let text = match &result { Ok(routes) => routes.iter().map(ToString::to_string).collect::<Vec<_>>().join("; "), Err(error) => error.clone() };
+                results.push(format!("{url} → {text}"));
+            }
+            judgement = combine_pac_judgement(judgement, direct, failed, tunnel)
+                .observe("pac", &ctx.platform.proxy.pac_url).observe("pacRoutes", results.join("; "));
+        } else if ctx.platform.proxy.wpad {
+            judgement = Judgement::new(Status::Inconclusive,"proxy.pacUnknown",params(&[]),"advice.proxy.readPac",params(&[]));
+        }
+        for (source,value) in &ctx.platform.proxy.sources { judgement = judgement.observe(source,value); }
+        judgement = judgement.observe("wpad", ctx.platform.proxy.wpad.to_string());
+        for (key,value) in [("httpsProxy",&ctx.platform.proxy.https_proxy),("socksProxy",&ctx.platform.proxy.socks_proxy)] { judgement = judgement.observe(key,value); }
+
         if !ctx.platform.proxy.http_proxy.is_empty() {
             judgement = judgement.observe("httpProxy", &ctx.platform.proxy.http_proxy);
         }
@@ -192,7 +228,25 @@ impl EnvironmentCheck for DnsConfigured {
             };
             servers.push(DnsServerView { ip: ip.clone(), country, provider });
         }
-        finish(&self.meta(), judge_configured_dns(&servers, &ctx.region.recommended_dns))
+        let mut result = judge_configured_dns(&servers, &ctx.region.recommended_dns);
+        // Configuration alone cannot establish an actual DNS leak.
+        if result.status == Status::Fail { result.status = Status::Warn; }
+        for host in ["claude.ai","api.anthropic.com"] {
+            let blocks = parse::resolvers_for_host(&ctx.platform.dns_blocks, host);
+            let scoped: Vec<_> = blocks.into_iter().filter(|b| !b.domains.is_empty()).collect();
+            if !scoped.is_empty() {
+                let known_cn = scoped.iter().flat_map(|b| &b.nameservers).any(|ip| parse::cn_dns_provider(ip).is_some());
+                result = result.observe(host, scoped.iter().flat_map(|b| b.nameservers.iter().map(move |ip| {
+                    let mut context = Vec::new();
+                    if !b.iface.is_empty() { context.push(b.iface.clone()); }
+                    if !b.domains.is_empty() { context.push(format!("domain {}", b.domains.join(", "))); }
+                    format!("{host} → {ip} ({})", context.join(", "))
+                })).collect::<Vec<_>>().join("; "));
+                if known_cn { result.status = Status::Fail; result.summary_key="dns.scopedCn".into(); }
+                else if result.status != Status::Fail { result.status=Status::Info; result.summary_key="dns.scopedInfo".into(); }
+            }
+        }
+        finish(&self.meta(), result)
     }
 }
 
@@ -207,6 +261,7 @@ impl EnvironmentCheck for DnsLeak {
             .hits
             .iter()
             .map(|hit| LeakHit {
+                path: hit.path.clone(), resolver: hit.resolver.clone(),
                 provider: parse::cn_dns_provider(&hit.ip).map(|name| name.to_string()),
                 ip: hit.ip.clone(),
                 country: hit.country.clone(),
@@ -214,7 +269,7 @@ impl EnvironmentCheck for DnsLeak {
                 asn: hit.asn.clone(),
             })
             .collect::<Vec<_>>();
-        finish(&self.meta(), judge_leak(&hits, report.inconclusive, &ctx.region))
+        finish(&self.meta(), judge_leak(&hits, report.system_inconclusive, &ctx.region).observe("configProbe", report.config_details.join("; ")).observe("configProbeStatus", if report.config_inconclusive { "incomplete" } else { "complete" }))
     }
 }
 
@@ -225,24 +280,31 @@ impl EnvironmentCheck for DnsEcs {
     }
     async fn detect(&self, ctx: &ScanContext) -> CheckResult {
         let report = ctx.ecs().await;
-        if report.failed && report.subnet.is_none() {
-            return finish(
-                &self.meta(),
-                Judgement::new(Status::Inconclusive, "ecs.unavailable", params(&[]), "advice.ecs.retry", params(&[])),
-            );
-        }
-        let country = if let Some(subnet) = &report.subnet {
-            let base = subnet.split('/').next().unwrap_or("");
-            if parse::is_private_ip(base) {
-                None
-            } else {
-                ctx.lookup(base).await.ok().map(|facts| facts.country)
+        let mut judgments = Vec::new();
+        let mut details = Vec::new();
+        let mut missing = report.results.is_empty();
+        for row in report.results {
+            missing |= row.error.is_some();
+            details.push(row.readable());
+            let subnets = parse::parse_ecs_subnets(&row.values);
+            let egress_ips: Vec<_> = row.values.iter().map(|s| s.trim().trim_matches('"')).filter(|s| s.parse::<std::net::IpAddr>().is_ok()).map(str::to_string).collect();
+            for subnet in subnets.into_iter().chain(egress_ips) {
+                let base = subnet.split('/').next().unwrap_or("");
+                let country = ctx.lookup(base).await.ok().map(|f| f.country);
+                missing |= country.as_ref().is_none_or(|c| c.is_empty());
+                judgments.push(judge_ecs(Some(&subnet), country.as_deref(), &ctx.region));
             }
-        } else {
-            None
-        };
-        finish(&self.meta(), judge_ecs(report.subnet.as_deref(), country.as_deref(), &ctx.region))
+        }
+        let result = aggregate_dns(judgments, missing);
+        finish(&self.meta(), result.observe("path", "configured-server").observe("resolvers", details.join("; ")))
+
     }
+}
+
+fn aggregate_dns(results: Vec<Judgement>, missing: bool) -> Judgement {
+    if let Some(fail) = results.iter().find(|j| j.status == Status::Fail) { return fail.clone(); }
+    if missing { return Judgement::new(Status::Inconclusive, "ecs.unavailable", params(&[]), "advice.ecs.retry", params(&[])); }
+    results.into_iter().max_by_key(|j| j.status.rank()).unwrap_or_else(|| Judgement::new(Status::Info, "ecs.absent", params(&[]), "advice.ecs.ok", params(&[])))
 }
 
 #[async_trait]
@@ -431,10 +493,12 @@ mod tests {
 
     fn empty_snapshot() -> platform::PlatformSnapshot {
         platform::PlatformSnapshot {
+            dns_blocks: Vec::new(),
             os: "linux".into(), timezone: String::new(), locale: String::new(),
             dns_servers: Vec::new(), route_v4_a: None, route_v4_b: None,
             route_v6: platform::Ipv6Route::Absent,
             proxy: platform::ProxySnapshot {
+            sources: Default::default(), wpad: false,
                 enabled: false, pac: false, pac_url: String::new(), bypass: Vec::new(),
                 http_proxy: String::new(), https_proxy: String::new(), socks_proxy: String::new(),
             },
@@ -524,5 +588,71 @@ mod tests {
         ));
         assert!(matches!(stub.fix(&ctx).await, Err(PhaseError::NotImplemented)));
         let _ = FixReport { id: "x".into(), changed: false, detail: String::new() };
+    }
+}
+
+#[cfg(test)] mod feature4_tests {
+    use super::*;
+    #[test] fn aggregation_leak_wins_and_missing_never_passes() {
+        let p=crate::region::find("us").unwrap();
+        assert_eq!(aggregate_dns(vec![judge_ecs(Some("1.2.3.0/24"),Some("US"),p)],true).status,Status::Inconclusive);
+        assert_eq!(aggregate_dns(vec![judge_ecs(Some("1.2.3.0/24"),Some("US"),p),judge_ecs(Some("2.3.4.0/24"),Some("CN"),p)],true).status,Status::Fail);
+        assert_eq!(judge_leak(&[LeakHit {path:"system".into(),resolver:"system".into(),ip:"1.2.3.4".into(),country:String::new(),city:String::new(),asn:String::new(),provider:None}],false,p).status,Status::Inconclusive);
+    }
+    #[test]
+    fn leak_paths_are_independent() {
+        let preset = crate::region::find("us").unwrap();
+        let hit = |path: &str, country: &str| LeakHit {
+            path: path.into(), resolver: "resolver".into(), ip: "1.2.3.4".into(),
+            country: country.into(), city: String::new(), asn: String::new(), provider: None,
+        };
+        let report = crate::intel::LeakReport {
+            config_details: vec!["223.5.5.5: timeout".into()],
+            hits: vec![], system_inconclusive: false, config_inconclusive: true,
+        };
+        assert_eq!(judge_leak(&[hit("system", "US")], report.system_inconclusive, preset).status, Status::Pass);
+        assert_eq!(judge_leak(&[hit("system", "US"), hit("configured-server", "CN")], false, preset).status, Status::Warn);
+        assert_eq!(judge_leak(&[hit("system", "CN")], true, preset).status, Status::Fail);
+        assert_eq!(judge_leak(&[hit("configured-server", "US")], false, preset).status, Status::Inconclusive);
+        assert_eq!(judge_leak(&[], false, preset).status, Status::Inconclusive);
+        assert_eq!(judge_leak(&[hit("system", "US")], true, preset).status, Status::Inconclusive);
+        assert_eq!(judge_leak(&[hit("system", "JP"), hit("configured-server", "")], false, preset).status, Status::Warn);
+        assert_eq!(judge_leak(&[hit("system", "US"), hit("configured-server", "")], false, preset).status, Status::Pass);
+        let mut mainland_provider = hit("system", "");
+        mainland_provider.provider = Some("mainland provider".into());
+        assert_eq!(judge_leak(&[mainland_provider], false, preset).status, Status::Fail);
+    }
+    #[test]
+    fn pac_first_route_and_bypass_judgements() {
+        let base = || judge_proxy(ProxyView { enabled: true, pac: true, pac_url: "file:///proxy.pac", bypass: &[], route_is_tunnel: false });
+        for (routes, tunnel, expected) in [
+            ("direct; proxy p:80", false, Status::Fail),
+            ("DIRECT; PROXY p:80", true, Status::Warn),
+            ("proxy p:80; direct", false, Status::Pass),
+            ("socks p:1080", false, Status::Pass),
+        ] {
+            let routes = crate::pac::parse_routes(routes).unwrap();
+            let direct = routes.first() == Some(&crate::pac::Route::Direct);
+            assert_eq!(combine_pac_judgement(base(), direct, false, tunnel).status, expected);
+        }
+        let bypass = vec!["claude.ai".into()];
+        let base = judge_proxy(ProxyView { enabled: true, pac: true, pac_url: "", bypass: &bypass, route_is_tunnel: false });
+        let combined = combine_pac_judgement(base, false, false, false);
+        assert_eq!(combined.status, Status::Fail);
+        assert_eq!(combined.summary_key, "proxy.bypassClaude");
+    }
+    #[tokio::test] async fn proxy_secrets_do_not_reach_json() {
+        use std::sync::{Arc,Mutex};
+        let mut platform=crate::platform::collect();
+        platform.errors.clear();
+        platform.proxy.enabled=true; platform.proxy.pac=false; platform.proxy.bypass.clear();
+        platform.proxy.http_proxy="http://alice:supersecret@proxy.example:8080/?TOKEN=privatevalue".into();
+        let ctx=ScanContext::new(crate::region::find("us").unwrap().clone(),platform,Arc::new(crate::intel::NullDirectory),Arc::new(Mutex::new(None)),"test".into(),"http://127.0.0.1/".into(),false);
+        let check=SystemProxy.detect(&ctx).await;
+        let json=serde_json::to_string(&check).unwrap();
+        for secret in ["alice","supersecret","privatevalue"] { assert!(!json.contains(secret),"{json}"); }
+        let report=crate::model::ScanReport {generated_at:String::new(),os:"linux".into(),region_id:"us".into(),region_name:Default::default(),verdict:crate::model::Verdict::Review,checks:vec![check],browser_url:String::new(),browser_opened:false,phase:1};
+        let json=serde_json::to_string(&report).unwrap();
+        assert!(!json.contains("supersecret") && !json.contains("privatevalue"));
     }
 }
