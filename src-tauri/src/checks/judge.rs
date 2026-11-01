@@ -188,50 +188,6 @@ pub fn judge_route_classified(iface_a: Option<&str>, iface_b: Option<&str>, exit
     judgement
 }
 
-pub fn judge_quic(iface: Option<&str>, proxy_enabled: bool) -> Judgement {
-    judge_quic_classified(iface,proxy_enabled,None)
-}
-
-pub fn judge_quic_classified(iface: Option<&str>, proxy_enabled: bool, class: Option<IfaceClass>) -> Judgement {
-    let Some(iface) = iface.filter(|s| !s.is_empty()) else {
-        return Judgement::new(Status::Inconclusive, "quic.missing", params(&[]), "advice.quic.missing", params(&[]));
-    };
-    match class.unwrap_or_else(|| parse::classify_iface(iface)) {
-        IfaceClass::Tunnel => Judgement::new(
-            Status::Pass,
-            "quic.tunnel",
-            params(&[("iface", iface)]),
-            "advice.quic.ok",
-            params(&[]),
-        )
-        .observe("iface", iface),
-        IfaceClass::Physical if proxy_enabled => Judgement::new(
-            Status::Fail,
-            "quic.proxyBypass",
-            params(&[("iface", iface)]),
-            "advice.quic.block",
-            params(&[]),
-        )
-        .observe("iface", iface),
-        IfaceClass::Physical => Judgement::new(
-            Status::Warn,
-            "quic.direct",
-            params(&[("iface", iface)]),
-            "advice.quic.block",
-            params(&[]),
-        )
-        .observe("iface", iface),
-        IfaceClass::Other => Judgement::new(
-            Status::Inconclusive,
-            "quic.unknown",
-            params(&[("iface", iface)]),
-            "advice.quic.missing",
-            params(&[]),
-        )
-        .observe("iface", iface),
-    }
-}
-
 pub struct ProxyView<'a> {
     pub enabled: bool,
     pub pac: bool,
@@ -812,11 +768,11 @@ pub fn judge_reach(hits: &[ReachHit]) -> Judgement {
     } else if has(ReachClass::RateLimited) {
         (Status::Warn, "reach.rateLimited", "advice.reach.fix")
     } else if ok_count == 0 {
-        (Status::Fail, "reach.fail", "advice.reach.fix")
+        (Status::Inconclusive, "reach.fail", "advice.reach.fix")
     } else if ok_count == hits.len() {
         (Status::Pass, "reach.ok", "advice.reach.ok")
     } else {
-        (Status::Warn, "reach.partial", "advice.reach.fix")
+        (Status::Inconclusive, "reach.partial", "advice.reach.fix")
     };
     let claude_ms = hits.iter().find(|hit| hit.host.contains("claude.ai")).and_then(|hit| hit.latency_ms).unwrap_or(0);
     let api_ms = hits.iter().find(|hit| hit.host.contains("api.")).and_then(|hit| hit.latency_ms).unwrap_or(0);
@@ -921,11 +877,36 @@ mod observation_tests {
     #[test]
     fn reachability_uses_response_classes() {
         let hit = |class| ReachHit { host: "claude.ai", class, status: None, latency_ms: None, error: None };
-        for (class, expected) in [(ReachClass::Ok, Status::Pass), (ReachClass::RegionDenied, Status::Fail), (ReachClass::RateLimited, Status::Warn), (ReachClass::ServerError, Status::Inconclusive), (ReachClass::Unreachable, Status::Fail)] {
+        for (class, expected) in [(ReachClass::Ok, Status::Pass), (ReachClass::RegionDenied, Status::Fail), (ReachClass::RateLimited, Status::Warn), (ReachClass::ServerError, Status::Inconclusive), (ReachClass::Unreachable, Status::Inconclusive)] {
             let j = judge_reach(&[hit(class), hit(class)]);
             assert_eq!(j.status, expected); assert!(j.observed.contains_key("classes"));
         }
-        assert_eq!(judge_reach(&[hit(ReachClass::Ok), hit(ReachClass::Unreachable)]).status, Status::Warn);
+        assert_eq!(judge_reach(&[hit(ReachClass::Ok), hit(ReachClass::Unreachable)]).status, Status::Inconclusive);
         assert_eq!(judge_reach(&[]).status, Status::Inconclusive);
     }
+}
+
+/// Only measured discrepancies establish exposure; missing measurements remain gaps.
+pub fn judge_udp_measurements(countries:&[String],tcp:Option<&str>,target:&str,unknown:bool,blocked:usize,quic:&Result<bool,String>)->(Status,&'static str){
+    if countries.iter().any(|c|c=="CN"||tcp.filter(|t|!t.is_empty()).is_some_and(|t|c!=t)) {(Status::Fail,"quic.measuredLeak")}
+    else if blocked==2 && quic.is_err(){(Status::Pass,"quic.blocked")}
+    else if unknown || countries.is_empty() || tcp.is_none_or(str::is_empty) || !matches!(quic,Ok(true)){(Status::Inconclusive,"quic.measureUnknown")}
+    else if countries.iter().all(|c|c==target){(Status::Pass,"quic.measuredOk")}
+    else{(Status::Inconclusive,"quic.measureUnknown")}
+}
+#[cfg(test)] mod udp_tests {
+use super::*;
+#[test] fn measured_paths_leaks_and_gaps(){
+ let ok=Ok(true);let err=Err("not run".into());
+ for (countries,tcp,unknown,blocked,q,status) in [
+ (vec!["US".into(),"US".into()],Some("US"),false,0,&ok,Status::Pass),
+ (vec!["CN".into()],Some("US"),true,0,&err,Status::Fail),
+ (vec!["JP".into()],Some("US"),false,0,&ok,Status::Fail),
+ (vec![],None,false,2,&err,Status::Pass),
+ (vec![],None,true,0,&err,Status::Inconclusive),
+ (vec!["US".into()],Some("US"),true,0,&ok,Status::Inconclusive),
+ (vec!["US".into()],None,false,0,&ok,Status::Inconclusive),
+ (vec!["US".into()],Some("US"),false,0,&err,Status::Inconclusive),
+ ] {assert_eq!(judge_udp_measurements(&countries,tcp,"US",unknown,blocked,q).0,status);}
+}
 }

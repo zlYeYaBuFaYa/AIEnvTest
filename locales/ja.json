@@ -242,5 +242,12 @@
   "proxy.pacUnknown": "PAC の経路を確認できませんでした。",
   "leak.configWarning": "設定済み DNS の調査で中国本土が観測されました。システムの経路は未確認です。",
   "dns.scopedCn": "Claude のドメインに中国本土の DNS が選択されています。",
-  "dns.scopedInfo": "ドメイン専用の DNS が選択されています。観測結果を確認してください。"
+  "dns.scopedInfo": "ドメイン専用の DNS が選択されています。観測結果を確認してください。",
+  "quic.measuredLeak": "UDP の実測出口が中国本土にあるか、有効な TCP 出口とは異なる国にあります。",
+  "quic.blocked": "UDP はブロックされています。QUIC はトンネル経由の TCP にフォールバックします。",
+  "quic.measuredOk": "UDP のマッピング先は対象地域と一致し、QUIC エンドポイントから応答がありました。",
+  "quic.measureUnknown": "UDP/QUIC の測定が不完全です。タイムアウトだけでは UDP のブロックを確認できません。",
+  "advice.quic.measured": "UDP の実測出口と有効な TCP 出口を比較してください。UDP がトンネルを迂回する場合は、トンネルに通すか UDP/443 をブロックしてください。",
+  "exit.pathDifference": "直接接続の出口は中国本土ですが、ブラウザーの有効な経路の出口は海外です。",
+  "advice.exit.pathDifference": "アプリが有効なプロキシ経路を使用するようにしてください。迂回すると直接接続の出口が露出する可能性があります。"
 }

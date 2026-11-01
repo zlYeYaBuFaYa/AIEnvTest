@@ -242,5 +242,12 @@
   "proxy.pacUnknown": "PAC routing could not be determined.",
   "leak.configWarning": "A configured DNS probe observed mainland China; the system path is unconfirmed.",
   "dns.scopedCn": "A mainland DNS resolver is selected for a Claude domain.",
-  "dns.scopedInfo": "A domain-specific DNS resolver is selected; inspect the observed details."
+  "dns.scopedInfo": "A domain-specific DNS resolver is selected; inspect the observed details.",
+  "quic.measuredLeak": "Live UDP probes found an exit in mainland China or a country different from the effective TCP exit.",
+  "quic.blocked": "UDP is blocked; QUIC falls back to TCP through the tunnel.",
+  "quic.measuredOk": "UDP mapped addresses match the target region, and the QUIC endpoint responded.",
+  "quic.measureUnknown": "UDP/QUIC measurements are incomplete; a timeout does not prove that UDP is blocked.",
+  "advice.quic.measured": "Compare the measured UDP exit with the effective TCP exit. Route UDP through the tunnel or block UDP/443 if it bypasses the tunnel.",
+  "exit.pathDifference": "Direct traffic exits in mainland China while the effective browser path exits overseas.",
+  "advice.exit.pathDifference": "Keep applications on the effective proxy path; applications that bypass it may expose the direct exit."
 }

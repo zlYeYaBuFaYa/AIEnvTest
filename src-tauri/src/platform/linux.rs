@@ -127,6 +127,7 @@ fn proxy() -> ProxySnapshot {
     let mut enabled = false;
     let mut pac = false;
     let mut pac_url = String::new();
+    let mut kde_endpoints = [String::new(),String::new(),String::new()];
     let mut bypass = env_bypass();
     if let Some(mode) = command_stdout("proxy", "gsettings", &["get", "org.gnome.system.proxy", "mode"]) {
         let mode = mode.trim().trim_matches('\'').to_string();
@@ -151,6 +152,14 @@ fn proxy() -> ProxySnapshot {
         if let Ok(text) = std::fs::read_to_string(path) {
             let (kde_enabled, kde_pac, kde_bypass, kde_url) = parse::parse_kioslaverc(&text);
             if kde_enabled {
+                let mut section=false;
+                for line in text.lines() {
+                    let line=line.trim();
+                    if line.starts_with('['){section=line=="[Proxy Settings]";continue;}
+                    if section { if let Some((key,value))=line.split_once('=') {
+                        if let Some(i)=["httpProxy","httpsProxy","socksProxy"].iter().position(|k|*k==key.trim()) { kde_endpoints[i]=value.trim().replace(' ',":"); }
+                    } }
+                }
                 enabled = true;
             }
             if kde_pac {
@@ -169,14 +178,14 @@ fn proxy() -> ProxySnapshot {
         }
     }
     ProxySnapshot {
-            sources: Default::default(), wpad: false,
+            sources: super::proxy_env_sources(), wpad: false,
         http_proxy: first_nonempty(&[
-            env_proxy(&["https_proxy", "HTTPS_PROXY", "http_proxy", "HTTP_PROXY", "all_proxy", "ALL_PROXY"]),
-            gsettings_host_port("org.gnome.system.proxy.http"),
+            env_proxy(&["http_proxy", "HTTP_PROXY"]),
+            gsettings_host_port("org.gnome.system.proxy.http"), kde_endpoints[0].clone(),
         ]),
-        https_proxy: gsettings_host_port("org.gnome.system.proxy.https"),
-        socks_proxy: gsettings_host_port("org.gnome.system.proxy.socks"),
-        enabled: enabled || !env_proxy(&["http_proxy", "HTTP_PROXY", "https_proxy", "HTTPS_PROXY", "all_proxy"]).is_empty(),
+        https_proxy: first_nonempty(&[env_proxy(&["https_proxy", "HTTPS_PROXY"]), gsettings_host_port("org.gnome.system.proxy.https"),kde_endpoints[1].clone()]),
+        socks_proxy: first_nonempty(&[env_proxy(&["all_proxy", "ALL_PROXY"]),gsettings_host_port("org.gnome.system.proxy.socks"),kde_endpoints[2].clone()]),
+        enabled: enabled || !env_proxy(&["http_proxy", "HTTP_PROXY", "https_proxy", "HTTPS_PROXY", "all_proxy", "ALL_PROXY"]).is_empty(),
         pac,
         pac_url,
         bypass: dedup_keep(bypass),

@@ -40,6 +40,13 @@ pub struct PlatformSnapshot {
     pub location_enabled: Option<bool>,
 }
 
+pub fn proxy_env_sources() -> std::collections::BTreeMap<String,String> {
+    [("env.http",env_proxy(&["http_proxy","HTTP_PROXY"])),
+     ("env.https",env_proxy(&["https_proxy","HTTPS_PROXY"])),
+     ("env.all",env_proxy(&["all_proxy","ALL_PROXY"]))]
+        .into_iter().filter(|(_,v)|!v.is_empty()).map(|(k,v)|(k.into(),v)).collect()
+}
+
 pub fn collect() -> PlatformSnapshot {
     #[cfg(target_os = "linux")]
     {

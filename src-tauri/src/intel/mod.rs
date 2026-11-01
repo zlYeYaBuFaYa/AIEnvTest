@@ -19,6 +19,8 @@ const BASH_TEST_BASE: &str = "https://bash.ws/dnsleak/test/";
 pub trait NetworkDirectory: Send + Sync {
     async fn lookup_ip(&self, ip: &str) -> Result<IpFacts, String>;
     async fn current_exit(&self, family: Family) -> Result<IpFacts, String>;
+    async fn effective_exit(&self, family: Family, _proxy: &crate::platform::ProxySnapshot) -> Result<IpFacts,String> { self.current_exit(family).await }
+    async fn udp_probe(&self) -> (crate::net::udp::StunResult,crate::net::udp::StunResult,Result<bool,String>) { (crate::net::udp::StunResult::Unknown("probe not run".into()),crate::net::udp::StunResult::Unknown("probe not run".into()),Err("probe not run".into())) }
     async fn dns_leak(&self, resolvers: &[String]) -> LeakReport;
     async fn client_subnet(&self, resolvers: &[String]) -> EcsReport;
 }
@@ -81,6 +83,24 @@ impl NetworkDirectory for PublicDirectory {
             return Ok(facts);
         }
         exit_from_ipwhois(family).await
+    }
+
+    async fn effective_exit(&self, family: Family, proxy: &crate::platform::ProxySnapshot) -> Result<IpFacts,String> {
+        let mut last = "exit unavailable".to_string();
+        for url in [IPINFO_EXIT, IPWHOIS_BASE] {
+            match crate::net::proxy::fetch(proxy,url,Some(family)).await {
+                Ok((r,path)) if (200..300).contains(&r.status) => {
+                    let facts = if url == IPINFO_EXIT { parse_ipinfo(&r.body) } else { parse_ipwhois(&r.body) };
+                    if let Ok(mut f) = facts { if validate_family(&f.ip,family).is_ok() { f.source = format!("{}; path: {}",f.source,path); return Ok(f); } }
+                    last = "exit response invalid".into();
+                }, Ok(_) => last = "exit HTTP request refused".into(), Err(e) => last = e,
+            }
+        }
+        Err(last)
+    }
+
+    async fn udp_probe(&self) -> (crate::net::udp::StunResult,crate::net::udp::StunResult,Result<bool,String>) {
+        tokio::join!(crate::net::udp::stun("stun.l.google.com:19302"),crate::net::udp::stun("stun.cloudflare.com:3478"),crate::net::udp::quic())
     }
 
     async fn dns_leak(&self, resolvers: &[String]) -> LeakReport {

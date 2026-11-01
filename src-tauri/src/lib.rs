@@ -16,7 +16,7 @@ mod scan;
 use std::sync::Mutex;
 
 use model::{RegionSummary, ScanReport};
-use scan::PreparedScan;
+use tauri::{Emitter, Manager};
 
 struct AppState {
     browser: Mutex<Option<browser::Hub>>,
@@ -28,11 +28,13 @@ fn list_regions() -> Vec<RegionSummary> {
 }
 
 #[tauri::command]
-async fn run_scan(state: tauri::State<'_, AppState>, region_id: String) -> Result<ScanReport, String> {
-    let prepared: PreparedScan = scan::execute(&region_id).await?;
-    if let Ok(mut guard) = state.browser.lock() {
-        *guard = Some(prepared.hub);
-    }
+async fn run_scan(app: tauri::AppHandle, region_id: String) -> Result<ScanReport, String> {
+    let ready_app = app.clone();
+    let prepared = scan::execute_with(&region_id, move |hub| {
+        let url = hub.public_url();
+        if let Ok(mut guard) = ready_app.state::<AppState>().browser.lock() { *guard = Some(hub); }
+        let _ = ready_app.emit("browser-ready", url);
+    }, move |report| { let _ = app.emit("report-updated", report); }).await?;
     Ok(prepared.report)
 }
 
@@ -69,7 +71,7 @@ fn reopen_browser(state: tauri::State<'_, AppState>) -> Result<String, String> {
     if opened {
         Ok(hub.public_url())
     } else {
-        Err(format!("Could not open the browser. The page is at {url}"))
+        Err("Could not open the browser page.".into())
     }
 }
 

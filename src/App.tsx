@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { Button, StatusBadge } from "@/components/ui";
 import { useTheme } from "@/lib/theme";
@@ -29,6 +30,14 @@ export default function App() {
   const [regionId, setRegionId] = useState("us");
   const [scanning, setScanning] = useState(false);
   const [report, setReport] = useState<ScanReport | null>(null);
+  const activeBrowserUrl = useRef("");
+  const listenersReady = useRef<Promise<unknown>>(Promise.resolve());
+  const [browserReady, setBrowserReady] = useState(false);
+  useEffect(() => {
+    const subscriptions = [listen<string>("browser-ready", e => { activeBrowserUrl.current = e.payload; setBrowserReady(true); }), listen<ScanReport>("report-updated", e => { if (e.payload.browserUrl === activeBrowserUrl.current) setReport(e.payload); })];
+    listenersReady.current = Promise.all(subscriptions);
+    return () => { subscriptions.forEach(p => { void p.then(unlisten => unlisten()); }); };
+  }, []);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState("");
 
@@ -53,11 +62,14 @@ export default function App() {
 
   async function scan() {
     setScanning(true);
+    setBrowserReady(false);
+    activeBrowserUrl.current = "";
     setError("");
     setSaved("");
     try {
+      await listenersReady.current;
       const next = await invoke<ScanReport>("run_scan", { regionId });
-      setReport(next);
+      setReport(current => current?.browserUrl === next.browserUrl && Date.parse(current.generatedAt) > Date.parse(next.generatedAt) ? current : next);
     } catch (err) {
       setError(t("error.scan", { error: String(err) }));
     } finally {
@@ -159,7 +171,7 @@ export default function App() {
         <Button className="md:min-w-36" onClick={scan} disabled={scanning || regions.length === 0}>
           {scanning ? t("scan.running") : report ? t("scan.again") : t("scan.action")}
         </Button>
-        <Button variant="outline" size="sm" onClick={() => invoke("reopen_browser").catch((err: unknown) => setError(String(err)))} disabled={!report}>
+        <Button variant="outline" size="sm" onClick={() => invoke("reopen_browser").catch((err: unknown) => setError(String(err)))} disabled={!browserReady}>
           {t("browser.reopen")}
         </Button>
       </section>

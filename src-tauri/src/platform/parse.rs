@@ -532,6 +532,15 @@ pub fn dedup_keep(items: Vec<String>) -> Vec<String> {
     out
 }
 
+pub fn scutil_proxy_endpoint(text: &str, protocol: &str) -> String {
+    let values: std::collections::BTreeMap<_,_> = text.lines().filter_map(|l| l.trim().split_once(':').map(|(k,v)|(k.trim(),v.trim()))).collect();
+    if values.get(format!("{protocol}Enable").as_str()) != Some(&"1") { return String::new(); }
+    let host = values.get(format!("{protocol}Proxy").as_str()).copied().unwrap_or("");
+    let port = values.get(format!("{protocol}Port").as_str()).copied().unwrap_or("");
+    if host.is_empty() || !port.parse::<u16>().is_ok_and(|p|p>0) { return String::new(); }
+    if host.contains(':') {format!("[{host}]:{port}")} else {format!("{host}:{port}")}
+}
+
 pub fn parse_scutil_proxy(text: &str) -> (bool, bool, Vec<String>, Option<String>) {
     let mut enabled = false;
     let mut pac = false;

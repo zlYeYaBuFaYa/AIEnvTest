@@ -67,7 +67,7 @@ impl EnvironmentCheck for ExitV4 {
         CheckMeta { id: "exit_ipv4", category: "exit" }
     }
     async fn detect(&self, ctx: &ScanContext) -> CheckResult {
-        let judgement = match ctx.exit_v4().await {
+        let mut judgement = match ctx.exit_v4().await {
             Ok(facts) => judge_exit(
                 Some(&facts.ip),
                 Some(&facts.country),
@@ -81,8 +81,27 @@ impl EnvironmentCheck for ExitV4 {
             .observe("timezone", &facts.timezone),
             Err(err) => judge_exit(None, None, "", "", "", None, &ctx.region).observe("error", &err),
         };
+        judgement = annotate_exit_paths(ctx, http::Family::V4, judgement).await;
         finish(&self.meta(), judgement)
     }
+}
+
+async fn annotate_exit_paths(ctx:&ScanContext,family:http::Family,mut judgement:Judgement)->Judgement {
+    // The successful collector includes the actual selected PAC fallback in its source.
+    let path=judgement.observed.get("source").and_then(|s|s.split_once("; path: ").map(|(_,p)|p.to_owned()));
+    judgement=judgement.observe("path",match path {Some(p)=>p,None=>ctx.path_label("https://ipinfo.io/json").await});
+    match ctx.direct_exit(family).await {
+        Ok(f)=>{
+            if f.country=="CN" && matches!(judgement.status,Status::Pass|Status::Warn) {
+                judgement.status=Status::Warn;
+                judgement.summary_key="exit.pathDifference".into();judgement.summary_params=params(&[]);
+                judgement.advice_key="advice.exit.pathDifference".into();judgement.advice_params=params(&[]);
+            }
+            judgement=judgement.observe("direct",format!("path: direct; {}, {}",f.ip,f.country));
+        },
+        Err(e)=>judgement=judgement.observe("direct",format!("path: direct; unavailable: {e}")),
+    }
+    judgement
 }
 
 #[async_trait]
@@ -95,8 +114,12 @@ impl EnvironmentCheck for ExitV6 {
         let judgement = match ctx.exit_v6().await {
             Ok(facts) => judge_ipv6(route, Some(&facts.country), &format!("{}, {}, {}", facts.city, facts.region, facts.country), &ctx.region)
                 .observe("ip", &facts.ip).observe("source", &facts.source),
-            Err(err) => judge_ipv6(route, None, "", &ctx.region).observe("error", err),
+            Err(err) => {
+                let unknown = crate::platform::Ipv6Route::Unknown("effective proxy IPv6 path was not observed".into());
+                judge_ipv6(if ctx.platform.proxy.enabled || ctx.platform.proxy.pac || ctx.platform.proxy.wpad { &unknown } else { route }, None, "", &ctx.region).observe("error",err)
+            },
         };
+        let judgement = annotate_exit_paths(ctx, http::Family::V6, judgement).await;
         finish(&self.meta(), judgement)
     }
 }
@@ -131,14 +154,20 @@ impl EnvironmentCheck for UdpQuic {
         CheckMeta { id: "udp_quic", category: "routing" }
     }
     async fn detect(&self, ctx: &ScanContext) -> CheckResult {
-        if let Some(judgement) = collection_failure(&ctx.platform, "route_v4", ctx.platform.route_v4_a.is_none() || ctx.platform.route_v4_b.is_none()) {
-            return finish(&self.meta(), judgement);
+        use crate::net::udp::StunResult;
+        let (a,b,quic)=ctx.udp_probe().await;
+        let tcp=ctx.exit_v4().await.ok();
+        let mut countries=Vec::new();let mut details=Vec::new();let mut unknown=false;let mut blocked=0;
+        for (server,r) in [("google",a),("cloudflare",b)] {
+            match r {
+                StunResult::Mapped(ip)=>match ctx.lookup(&ip.to_string()).await {Ok(f) if !f.country.is_empty()=>{details.push(format!("{server}: {ip} {}",f.country));countries.push(f.country)}, _=>{unknown=true;details.push(format!("{server}: {ip}, country unavailable"));}},
+                StunResult::Blocked=>{blocked+=1;details.push(format!("{server}: UDP administratively blocked"));},
+                StunResult::Unknown(e)=>{unknown=true;details.push(format!("{server}: {e}"));},
+            }
         }
-        if let Some(judgement) = collection_failure(&ctx.platform, "proxy", true) {
-            return finish(&self.meta(), judgement);
-        }
-        let iface = ctx.platform.route_v4_a.as_deref().or(ctx.platform.route_v4_b.as_deref());
-        finish(&self.meta(), judge::judge_quic_classified(iface, ctx.platform.proxy.enabled, ctx.platform.windows_routes.iter().find(|r| Some(r.alias.as_str()) == iface).map(|r| r.class)))
+        let (status,key)=judge::judge_udp_measurements(&countries,tcp.as_ref().map(|t|t.country.as_str()),&ctx.region.country,unknown,blocked,&quic);
+        finish(&self.meta(),Judgement::new(status,key,params(&[]),"advice.quic.measured",params(&[]))
+            .observe("UDP",details.join("; ")).observe("QUIC",format!("{quic:?}")).observe("TCP effective country",tcp.map(|f|f.country).unwrap_or_default()))
     }
 }
 
@@ -478,7 +507,9 @@ impl EnvironmentCheck for TlsIssuer {
     async fn detect(&self, ctx: &ScanContext) -> CheckResult {
         let facts = ctx.tls().await;
         let issuer = if facts.issuer.is_empty() { None } else { Some(facts.issuer.as_str()) };
-        finish(&self.meta(), judge_tls(issuer, facts.verified, facts.error.as_deref()))
+        let direct = crate::net::tls::inspect("claude.ai").await;
+        finish(&self.meta(), judge_tls(issuer, facts.verified, facts.error.as_deref())
+            .observe("path",facts.path).observe("subject",facts.subject).observe("direct",format!("path: direct; {:?}",direct)))
     }
 }
 
@@ -499,7 +530,10 @@ impl EnvironmentCheck for Reachability {
                 error: sample.error.clone(),
             })
             .collect::<Vec<_>>();
-        finish(&self.meta(), judge_reach(&hits))
+        finish(&self.meta(), judge_reach(&hits)
+            .observe("path.claude.ai",samples.first().map(|s|s.path.clone()).unwrap_or_default())
+            .observe("path.api.anthropic.com",samples.get(1).map(|s|s.path.clone()).unwrap_or_default())
+            .observe("direct",format!("path: direct; {}",ctx.direct_reach().await)))
     }
 }
 
@@ -513,7 +547,7 @@ mod tests {
     use crate::region;
     use std::sync::{Arc, Mutex as StdMutex};
 
-    fn empty_snapshot() -> platform::PlatformSnapshot {
+    pub(super) fn empty_snapshot() -> platform::PlatformSnapshot {
         platform::PlatformSnapshot {
             windows_territory: None, windows_routes: vec![],
             dns_blocks: Vec::new(),
@@ -543,7 +577,7 @@ mod tests {
         for (check, key) in [
             (Box::new(Timezone) as Box<dyn EnvironmentCheck>, "timezone"),
             (Box::new(Locale), "locale"), (Box::new(DnsConfigured), "dns"),
-            (Box::new(RouteV4), "route_v4"), (Box::new(UdpQuic), "route_v4"),
+            (Box::new(RouteV4), "route_v4"),
             (Box::new(SystemProxy), "proxy"), (Box::new(Location), "location"),
         ] {
             let result = check.detect(&ctx).await;
@@ -695,4 +729,28 @@ mod tests {
         let json=serde_json::to_string(&report).unwrap();
         assert!(!json.contains("supersecret") && !json.contains("privatevalue"));
     }
+}
+
+#[cfg(test)]
+pub(crate) fn test_snapshot()->crate::platform::PlatformSnapshot { tests::empty_snapshot() }
+
+#[cfg(test)] mod effective_path_tests {
+use super::*;
+use crate::{intel::{NetworkDirectory,IpFacts,LeakReport,EcsReport},platform::ProxySnapshot};
+struct Fake;
+fn facts(country:&str)->IpFacts {IpFacts{ip:if country=="CN"{"203.0.113.2"}else{"198.51.100.8"}.into(),country:country.into(),city:"New York".into(),region:"New York".into(),org:"ISP".into(),timezone:"America/New_York".into(),hosting:Some(false),source:"fake; path: effective(PROXY proxy.invalid:8080)".into()} }
+#[async_trait] impl NetworkDirectory for Fake {
+ async fn current_exit(&self,_:http::Family)->Result<IpFacts,String>{Ok(facts("CN"))}
+ async fn effective_exit(&self,_:http::Family,_:&ProxySnapshot)->Result<IpFacts,String>{Ok(facts("US"))}
+ async fn lookup_ip(&self,_:&str)->Result<IpFacts,String>{Err("not run".into())}
+ async fn dns_leak(&self,_:&[String])->LeakReport{unreachable!()}
+ async fn client_subnet(&self,_:&[String])->EcsReport{unreachable!()}
+}
+#[tokio::test] async fn mainland_direct_overseas_effective_warns_in_both_families(){
+ let mut platform=test_snapshot();platform.proxy.enabled=true;platform.proxy.http_proxy="http://user:secret@proxy.invalid:8080".into();
+ let ctx=ScanContext::new(crate::region::find("us").unwrap().clone(),platform,std::sync::Arc::new(Fake),Default::default(),"test".into(),String::new(),false);
+ for check in [Box::new(ExitV4) as Box<dyn EnvironmentCheck>,Box::new(ExitV6)] {
+ let result=check.detect(&ctx).await;assert_eq!(result.status,Status::Warn);assert_eq!(result.summary_key,"exit.pathDifference");assert!(result.observed["direct"].contains("CN"));assert_eq!(result.observed["path"],"effective(PROXY proxy.invalid:8080)");assert!(!serde_json::to_string(&result).unwrap().contains("secret"));
+ }
+}
 }

@@ -87,14 +87,14 @@ fn proxy() -> ProxySnapshot {
     let mut bypass = bypass;
     bypass.extend(env_bypass());
     ProxySnapshot {
-            sources: Default::default(), wpad: false,
-        enabled: enabled || !env_proxy(&["http_proxy", "https_proxy", "all_proxy"]).is_empty(),
+            sources: super::proxy_env_sources(), wpad: text.lines().any(|l|l.trim().split_once(':').is_some_and(|(k,v)|k.trim()=="ProxyAutoDiscoveryEnable" && v.trim()=="1")),
+        enabled: enabled || !env_proxy(&["http_proxy", "HTTP_PROXY", "https_proxy", "HTTPS_PROXY", "all_proxy", "ALL_PROXY"]).is_empty(),
         pac,
         pac_url: pac_url.unwrap_or_default(),
         bypass: dedup_keep(bypass),
-        http_proxy: env_proxy(&["http_proxy", "HTTP_PROXY"]),
-        https_proxy: env_proxy(&["https_proxy", "HTTPS_PROXY"]),
-        socks_proxy: env_proxy(&["all_proxy", "ALL_PROXY"]),
+        http_proxy: { let value=env_proxy(&["http_proxy", "HTTP_PROXY"]); if value.is_empty() {parse::scutil_proxy_endpoint(&text,"HTTP")} else {value} },
+        https_proxy: { let value=env_proxy(&["https_proxy", "HTTPS_PROXY"]); if value.is_empty() {parse::scutil_proxy_endpoint(&text,"HTTPS")} else {value} },
+        socks_proxy: { let value=env_proxy(&["all_proxy", "ALL_PROXY"]); if value.is_empty() {parse::scutil_proxy_endpoint(&text,"SOCKS")} else {value} },
     }
 }
 

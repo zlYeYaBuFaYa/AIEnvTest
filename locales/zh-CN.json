@@ -242,5 +242,12 @@
   "proxy.pacUnknown": "无法确定 PAC 的实际路由。",
   "leak.configWarning": "配置 DNS 探测发现中国大陆出口；尚未确认系统解析路径。",
   "dns.scopedCn": "Claude 域名选择了中国大陆 DNS 解析器。",
-  "dns.scopedInfo": "目标域名使用专用 DNS 解析器，请查看观测详情。"
+  "dns.scopedInfo": "目标域名使用专用 DNS 解析器，请查看观测详情。",
+  "quic.measuredLeak": "UDP 实测出口位于中国大陆，或与有效 TCP 出口所在国家不同。",
+  "quic.blocked": "UDP 已被阻止；QUIC 将回退到通过隧道传输的 TCP。",
+  "quic.measuredOk": "UDP 映射地址位于目标地区，且 QUIC 端点已响应。",
+  "quic.measureUnknown": "UDP/QUIC 测量尚不完整；超时不能证明 UDP 已被阻止。",
+  "advice.quic.measured": "请比较 UDP 实测出口与有效 TCP 出口。若 UDP 绕过隧道，请将其纳入隧道或阻止 UDP/443。",
+  "exit.pathDifference": "直连流量从中国大陆出口，而浏览器的有效路径从海外出口。",
+  "advice.exit.pathDifference": "请确保应用使用有效代理路径；绕过代理的应用可能暴露直连出口。"
 }

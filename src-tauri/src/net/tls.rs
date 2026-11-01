@@ -4,13 +4,14 @@ use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, Server
 use rustls::client::WebPkiServerVerifier;
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use rustls::{DigitallySignedStruct, Error as TlsError, SignatureScheme};
-use tokio::net::TcpStream;
+
 use tokio::time::{timeout, Duration};
 use tokio_rustls::TlsConnector;
 use x509_parser::prelude::*;
 
 #[derive(Debug, Clone)]
 pub struct CertFacts {
+    pub path: String,
     pub issuer: String,
     pub subject: String,
     pub verified: bool,
@@ -18,9 +19,16 @@ pub struct CertFacts {
 }
 
 pub async fn inspect(host: &str) -> CertFacts {
-    match inspect_inner(host).await {
+    let mut facts = inspect_path(host, &super::proxy::Path::Direct).await;
+    facts.path = "direct".into();
+    facts
+}
+
+pub async fn inspect_path(host: &str, path: &super::proxy::Path) -> CertFacts {
+    match inspect_inner(host, path).await {
         Ok(facts) => facts,
         Err(error) => CertFacts {
+            path: path.label(),
             issuer: String::new(),
             subject: String::new(),
             verified: false,
@@ -29,7 +37,24 @@ pub async fn inspect(host: &str) -> CertFacts {
     }
 }
 
-async fn inspect_inner(host: &str) -> Result<CertFacts, String> {
+pub async fn inspect_effective(host:&str, proxy:&crate::platform::ProxySnapshot)->CertFacts {
+    let measured = timeout(Duration::from_secs(25),async {
+        let paths = super::proxy::resolve(proxy,&format!("https://{host}/")).await?;
+        let mut last = None;
+        for path in paths {
+            let facts = inspect_path(host,&path).await;
+            if !facts.issuer.is_empty() { return Ok(facts); }
+            last = Some(facts);
+        }
+        last.ok_or_else(||"no effective route".to_string())
+    }).await;
+    match measured {
+        Ok(Ok(facts))=>facts,
+        other=>CertFacts {path:"effective (unavailable)".into(),issuer:String::new(),subject:String::new(),verified:false,error:Some(match other {Ok(Err(e))=>e,_=>"effective TLS timeout".into()})},
+    }
+}
+
+async fn inspect_inner(host: &str, path: &super::proxy::Path) -> Result<CertFacts, String> {
     let captured: Arc<Mutex<Option<Vec<u8>>>> = Arc::new(Mutex::new(None));
     let verified = Arc::new(Mutex::new(false));
     let verify_error = Arc::new(Mutex::new(None));
@@ -45,7 +70,7 @@ async fn inspect_inner(host: &str) -> Result<CertFacts, String> {
             .with_custom_certificate_verifier(verifier)
             .with_no_client_auth(),
     );
-    let stream = timeout(Duration::from_secs(8), TcpStream::connect((host, 443)))
+    let stream = timeout(Duration::from_secs(8), super::proxy::connect(path, host, 443, None))
         .await
         .map_err(|_| "timeout".to_string())?
         .map_err(|err| err.to_string())?;
@@ -60,6 +85,7 @@ async fn inspect_inner(host: &str) -> Result<CertFacts, String> {
     let verified_flag = *verified.lock().map_err(|err| err.to_string())?;
     let error = verify_error.lock().map_err(|err| err.to_string())?.clone();
     Ok(CertFacts {
+        path: path.label(),
         issuer: cert.issuer().to_string(),
         subject: cert.subject().to_string(),
         verified: verified_flag,

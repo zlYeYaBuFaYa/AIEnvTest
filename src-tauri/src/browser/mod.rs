@@ -14,6 +14,8 @@ const PAGE: &str = include_str!("page.html");
 pub struct BrowserPayload {
     #[serde(default)]
     pub webrtc_status: Option<WebRtcStatus>,
+    #[serde(default, skip_deserializing)]
+    pub collection_revision: u64,
     pub scan_id: String,
     #[serde(default)]
     pub timezone: String,
@@ -261,6 +263,8 @@ fn read_response(stream: &mut TcpStream, slot: &Mutex<Option<BrowserPayload>>, e
         ("POST", "/api/report") => {
             let mut payload = parse_report(&buf[split + 4..split + 4 + length], &expected.scan_id)?;
             if payload.accept_language.is_empty() { payload.accept_language = accept; }
+            static REVISION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+            payload.collection_revision = REVISION.fetch_add(1, Ordering::Relaxed);
             *slot.lock().map_err(|_| 500u16)? = Some(payload);
             Ok(http(204, "text/plain", b""))
         }

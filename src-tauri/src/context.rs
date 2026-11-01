@@ -33,6 +33,7 @@ pub fn classify_reach(host: &str, status: Option<u16>) -> ReachClass {
 
 #[derive(Debug, Clone)]
 pub struct ReachSample {
+    pub path: String,
     pub host: &'static str,
     pub class: ReachClass,
     pub status: Option<u16>,
@@ -54,6 +55,9 @@ pub struct ScanContext {
     tls: OnceCell<tls::CertFacts>,
     reach: OnceCell<Vec<ReachSample>>,
     browser: OnceCell<BrowserState>,
+    browser_override: StdMutex<Option<BrowserPayload>>,
+    direct_v4: OnceCell<Result<IpFacts,String>>,
+    direct_v6: OnceCell<Result<IpFacts,String>>,
     slot: Arc<StdMutex<Option<BrowserPayload>>>,
     scan_id: String,
 }
@@ -82,6 +86,9 @@ impl ScanContext {
             tls: OnceCell::new(),
             reach: OnceCell::new(),
             browser: OnceCell::new(),
+            browser_override: StdMutex::new(None),
+            direct_v4: OnceCell::new(),
+            direct_v6: OnceCell::new(),
             slot,
             scan_id,
         }
@@ -90,7 +97,7 @@ impl ScanContext {
     pub async fn exit_v4(&self) -> Result<IpFacts, String> {
         let directory = self.directory.clone();
         self.exit_v4
-            .get_or_init(|| async move { directory.current_exit(Family::V4).await })
+            .get_or_init(|| async move { if self.no_proxy() { self.direct_exit(Family::V4).await } else { directory.effective_exit(Family::V4, &self.platform.proxy).await } })
             .await
             .clone()
     }
@@ -98,10 +105,26 @@ impl ScanContext {
     pub async fn exit_v6(&self) -> Result<IpFacts, String> {
         let directory = self.directory.clone();
         self.exit_v6
-            .get_or_init(|| async move { directory.current_exit(Family::V6).await })
+            .get_or_init(|| async move { if self.no_proxy() { self.direct_exit(Family::V6).await } else { directory.effective_exit(Family::V6, &self.platform.proxy).await } })
             .await
             .clone()
     }
+
+    fn no_proxy(&self)->bool { !self.platform.proxy.enabled && !self.platform.proxy.pac && !self.platform.proxy.wpad }
+    pub async fn udp_probe(&self) -> (crate::net::udp::StunResult,crate::net::udp::StunResult,Result<bool,String>) { self.directory.udp_probe().await }
+    pub async fn direct_exit(&self, family: Family) -> Result<IpFacts,String> {
+        let cell = match family { Family::V4=>&self.direct_v4, Family::V6=>&self.direct_v6 };
+        cell.get_or_init(|| self.directory.current_exit(family)).await.clone()
+    }
+    pub fn browser_version(&self)->Option<String> { match self.browser.get() { Some(BrowserState::Ready(p))=>serde_json::to_string(p).ok(),_=>None } }
+    pub fn refresh_browser(&self,payload:BrowserPayload) { if payload.scan_id==self.scan_id {if let Ok(mut p)=self.browser_override.lock(){*p=Some(payload);}} }
+
+    pub async fn direct_reach(&self) -> String {
+        let mut out=Vec::new();
+        for url in ["https://claude.ai/","https://api.anthropic.com/"] {out.push(format!("{url}: {:?}",http::fetch(url,None,Duration::from_secs(12)).await.map(|r|r.status)));}
+        out.join("; ")
+    }
+    pub async fn path_label(&self,url:&str)->String { match crate::net::proxy::resolve(&self.platform.proxy,url).await {Ok(p)=>p.iter().map(|p|p.label()).collect::<Vec<_>>().join("; fallback: "),Err(_)=>"effective (proxy resolution unavailable)".into()} }
 
     pub async fn lookup(&self, ip: &str) -> Result<IpFacts, String> {
         self.directory.lookup_ip(ip).await
@@ -130,15 +153,15 @@ impl ScanContext {
     }
 
     pub async fn tls(&self) -> tls::CertFacts {
-        self.tls.get_or_init(|| tls::inspect("claude.ai")).await.clone()
+        self.tls.get_or_init(|| tls::inspect_effective("claude.ai", &self.platform.proxy)).await.clone()
     }
 
     pub async fn reach(&self) -> Vec<ReachSample> {
         self.reach
             .get_or_init(|| async {
                 let (claude, api) = tokio::join!(
-                    timed("https://claude.ai/", "claude.ai"),
-                    timed("https://api.anthropic.com/", "api.anthropic.com"),
+                    timed("https://claude.ai/", "claude.ai", &self.platform.proxy),
+                    timed("https://api.anthropic.com/", "api.anthropic.com", &self.platform.proxy),
                 );
                 vec![claude, api]
             })
@@ -146,7 +169,11 @@ impl ScanContext {
             .clone()
     }
 
+    #[cfg(test)]
+    pub fn cache_missing_browser_for_test(&self) { let _ = self.browser.set(BrowserState::Missing); }
+
     pub async fn browser(&self) -> BrowserState {
+        if let Some(payload) = self.browser_override.lock().ok().and_then(|s| s.clone()).filter(|p| p.scan_id == self.scan_id) { return BrowserState::Ready(payload); }
         let slot = self.slot.clone();
         let scan_id = self.scan_id.clone();
         self.browser
@@ -166,11 +193,12 @@ impl ScanContext {
     }
 }
 
-async fn timed(url: &str, host: &'static str) -> ReachSample {
+async fn timed(url: &str, host: &'static str, proxy: &crate::platform::ProxySnapshot) -> ReachSample {
     let started = Instant::now();
-    match http::fetch(url, None, Duration::from_secs(12)).await {
-        Ok(response) if response.status > 0 => ReachSample {
+    match crate::net::proxy::fetch(proxy, url, None).await {
+        Ok((response, path)) if response.status > 0 => ReachSample {
             host,
+            path,
             class: classify_reach(host, Some(response.status)),
             status: Some(response.status),
             latency_ms: Some(started.elapsed().as_millis() as u64),
@@ -178,6 +206,7 @@ async fn timed(url: &str, host: &'static str) -> ReachSample {
         },
         Ok(_) => ReachSample {
             host,
+            path: "effective (unavailable)".into(),
             class: ReachClass::Unreachable,
             status: None,
             latency_ms: Some(started.elapsed().as_millis() as u64),
@@ -185,6 +214,7 @@ async fn timed(url: &str, host: &'static str) -> ReachSample {
         },
         Err(err) => ReachSample {
             host,
+            path: "effective (unavailable)".into(),
             class: ReachClass::Unreachable,
             status: None,
             latency_ms: None,

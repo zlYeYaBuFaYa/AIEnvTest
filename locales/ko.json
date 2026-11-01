@@ -242,5 +242,12 @@
   "proxy.pacUnknown": "PAC 경로를 확인할 수 없습니다.",
   "leak.configWarning": "설정된 DNS 탐사에서 중국 본토가 관측되었습니다. 시스템 경로는 확인되지 않았습니다.",
   "dns.scopedCn": "Claude 도메인에 중국 본토 DNS가 선택되었습니다.",
-  "dns.scopedInfo": "도메인 전용 DNS가 선택되었습니다. 관측 세부 정보를 확인하세요."
+  "dns.scopedInfo": "도메인 전용 DNS가 선택되었습니다. 관측 세부 정보를 확인하세요.",
+  "quic.measuredLeak": "UDP 실측 출구가 중국 본토에 있거나 유효 TCP 출구와 다른 국가에 있습니다.",
+  "quic.blocked": "UDP가 차단되어 있습니다. QUIC는 터널을 통한 TCP 연결로 전환됩니다.",
+  "quic.measuredOk": "UDP 매핑 주소가 대상 지역과 일치하며 QUIC 엔드포인트가 응답했습니다.",
+  "quic.measureUnknown": "UDP/QUIC 측정이 불완전합니다. 시간 초과만으로 UDP 차단을 확인할 수 없습니다.",
+  "advice.quic.measured": "실측 UDP 출구와 유효 TCP 출구를 비교하세요. UDP가 터널을 우회하면 터널을 통해 보내거나 UDP/443을 차단하세요.",
+  "exit.pathDifference": "직접 연결은 중국 본토로 나가지만 브라우저의 유효 경로는 해외로 나갑니다.",
+  "advice.exit.pathDifference": "앱이 유효 프록시 경로를 사용하도록 하세요. 프록시를 우회하는 앱은 직접 연결 출구를 노출할 수 있습니다."
 }

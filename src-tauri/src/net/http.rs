@@ -21,6 +21,10 @@ pub struct Response {
 }
 
 pub async fn fetch(raw_url: &str, family: Option<Family>, budget: Duration) -> Result<Response, String> {
+    fetch_path(raw_url, family, budget, &super::proxy::Path::Direct).await
+}
+
+pub async fn fetch_path(raw_url: &str, family: Option<Family>, budget: Duration, path: &super::proxy::Path) -> Result<Response,String> {
     let started = std::time::Instant::now();
     let mut current = raw_url.to_string();
     for _ in 0..3 {
@@ -28,7 +32,7 @@ pub async fn fetch(raw_url: &str, family: Option<Family>, budget: Duration) -> R
         if left.is_zero() {
             return Err("timeout".into());
         }
-        let response = timeout(left, fetch_once(&current, family))
+        let response = timeout(left, fetch_once(&current, family, path))
             .await
             .map_err(|_| "timeout".to_string())?
             .map_err(|err| err)?;
@@ -46,6 +50,33 @@ pub async fn fetch(raw_url: &str, family: Option<Family>, budget: Duration) -> R
         return Ok(response);
     }
     Err("too many redirects".into())
+}
+
+/// Resolve PAC and bypass rules anew for each redirect target.
+pub async fn fetch_effective(raw_url: &str, family: Option<Family>, proxy: &crate::platform::ProxySnapshot) -> Result<(Response,String),String> {
+    let started=std::time::Instant::now();
+    timeout(Duration::from_secs(18),async {
+        let mut current=raw_url.to_owned();
+        for _ in 0..3 {
+            let routes=super::proxy::resolve(proxy,&current).await?;
+            let mut result=Err("no effective route".to_string());
+            for route in routes {
+                let left=Duration::from_secs(18).saturating_sub(started.elapsed());
+                match timeout(left,fetch_once(&current,family,&route)).await {
+                    Ok(Ok(response))=>{result=Ok((response,route.label()));break},
+                    Ok(Err(e))=>result=Err(e),Err(_)=>result=Err("effective request timeout".into()),
+                }
+            }
+            let (response,label)=result?;
+            if matches!(response.status,301|302|303|307|308) {
+                if let Some(location)=response.body.lines().find_map(|l|l.strip_prefix("location: ")) {
+                    current=resolve_location(&current,location)?;continue;
+                }
+            }
+            return Ok((response,label));
+        }
+        Err("too many effective redirects".into())
+    }).await.map_err(|_|"effective request timeout".to_string())?
 }
 
 pub async fn fetch_https(raw_url: &str, family: Option<Family>, budget: Duration) -> Result<Response, String> {
@@ -71,11 +102,11 @@ fn resolve_location(base: &str, location: &str) -> Result<String, String> {
     Ok(target.to_string())
 }
 
-async fn fetch_once(raw_url: &str, family: Option<Family>) -> Result<Response, String> {
+async fn fetch_once(raw_url: &str, family: Option<Family>, route: &super::proxy::Path) -> Result<Response, String> {
     let url = Url::parse(raw_url).map_err(|err| err.to_string())?;
     if !matches!(url.scheme(), "http" | "https") { return Err("unsupported URL scheme".into()); }
     let https = url.scheme() == "https";
-    let host = url.host_str().ok_or("missing host")?.to_string();
+    let host = url.host_str().ok_or("missing host")?.trim_start_matches('[').trim_end_matches(']').to_string();
     let port = url.port_or_known_default().unwrap_or(if https { 443 } else { 80 });
     let path = if url.query().is_some() {
         format!("{}?{}", url.path(), url.query().unwrap_or(""))
@@ -83,7 +114,7 @@ async fn fetch_once(raw_url: &str, family: Option<Family>) -> Result<Response, S
         let path = url.path();
         if path.is_empty() { "/".into() } else { path.to_string() }
     };
-    let stream = connect(&host, port, family).await?;
+    let stream = super::proxy::connect(route, &host, port, family).await?;
     let request = format!(
         "GET {path} HTTP/1.1\r\nHost: {host}\r\nUser-Agent: AIEnv/0.1\r\nAccept: */*\r\nConnection: close\r\n\r\n"
     );
@@ -101,7 +132,7 @@ async fn fetch_once(raw_url: &str, family: Option<Family>) -> Result<Response, S
     }
 }
 
-async fn connect(host: &str, port: u16, family: Option<Family>) -> Result<TcpStream, String> {
+pub async fn connect(host: &str, port: u16, family: Option<Family>) -> Result<TcpStream, String> {
     let addrs = tokio::net::lookup_host((host, port)).await.map_err(|err| err.to_string())?;
     let mut last = "no address".to_string();
     for addr in addrs {
