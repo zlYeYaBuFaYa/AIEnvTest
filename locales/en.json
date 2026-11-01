@@ -273,5 +273,21 @@
   "repair.success": "Transaction complete. Results refreshed.",
   "repair.failed": "Transaction failed. Review rollback details:",
   "repair.none": "No supported fixes are currently available.",
-  "repair.saved": "Backup saved."
+  "repair.saved": "Backup saved.",
+  "repair.openSettings": "Open settings",
+  "repair.guidance": "Guidance only: turn off location access in system settings. No setting is changed automatically and no restore is available for manual changes.",
+  "repair.ntpNote": "Enable network time and request synchronization. Restore returns the saved enabled state; it does not turn the clock back.",
+  "repair.settingsUnavailable": "Inconclusive: system settings could not be opened. Open your desktop’s location privacy settings manually.",
+  "repair.commandUnavailable": "Inconclusive: a required system command is unavailable.",
+  "repair.commandFailed": "Inconclusive: the system command failed or requires administrator authorization.",
+  "repair.commandTimeout": "Inconclusive: the system command timed out.",
+  "repair.invalidCommandOutput": "Inconclusive: the system command output could not be read reliably.",
+  "repair.timezoneUnavailable": "Inconclusive: the current timezone could not be observed; changes are refused.",
+  "repair.timezoneInvalid": "The timezone value is invalid.",
+  "repair.timezoneVerify": "The timezone change could not be verified. Review rollback details.",
+  "repair.timezoneMapping": "Inconclusive: the preset territory has no matching CLDR Windows timezone ID.",
+  "repair.ntpUnavailable": "Inconclusive: the network time enabled state could not be observed; changes are refused.",
+  "repair.ntpInvalid": "The saved network time state is invalid.",
+  "repair.ntpVerify": "The network time enabled state could not be verified. Review rollback details.",
+  "repair.scanRequired": "Inconclusive: run a scan and select a target region before creating this plan."
 }

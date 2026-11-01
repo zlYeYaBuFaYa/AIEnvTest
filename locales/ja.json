@@ -273,5 +273,21 @@
   "repair.success": "処理が完了し、検査結果を更新しました。",
   "repair.failed": "処理に失敗しました。ロールバックの詳細を確認してください：",
   "repair.none": "現在、対応する修復はありません。",
-  "repair.saved": "バックアップを保存しました。"
+  "repair.saved": "バックアップを保存しました。",
+  "repair.openSettings": "設定を開く",
+  "repair.guidance": "操作案内のみ：システム設定で位置情報へのアクセスを無効にしてください。設定は自動変更されず、手動での変更は復元できません。",
+  "repair.ntpNote": "ネットワーク時刻を有効にして同期を要求します。復元では以前の有効・無効の状態に戻しますが、時計の時刻は巻き戻しません。",
+  "repair.settingsUnavailable": "判定不能：システム設定を開けませんでした。位置情報のプライバシー設定を手動で開いてください。",
+  "repair.commandUnavailable": "判定不能：必要なシステムコマンドがありません。",
+  "repair.commandFailed": "判定不能：システムコマンドが失敗したか、管理者の承認が必要です。",
+  "repair.commandTimeout": "判定不能：システムコマンドがタイムアウトしました。",
+  "repair.invalidCommandOutput": "判定不能：システムコマンドの出力を正しく読み取れませんでした。",
+  "repair.timezoneUnavailable": "判定不能：現在のタイムゾーンを取得できないため、変更を拒否しました。",
+  "repair.timezoneInvalid": "タイムゾーンの値が無効です。",
+  "repair.timezoneVerify": "タイムゾーンの変更を確認できませんでした。ロールバックの詳細を確認してください。",
+  "repair.timezoneMapping": "判定不能：プリセット地域に対応する CLDR の Windows タイムゾーン ID がありません。",
+  "repair.ntpUnavailable": "判定不能：ネットワーク時刻の有効状態を取得できないため、変更を拒否しました。",
+  "repair.ntpInvalid": "保存されたネットワーク時刻の状態が無効です。",
+  "repair.ntpVerify": "ネットワーク時刻の有効状態を確認できませんでした。ロールバックの詳細を確認してください。",
+  "repair.scanRequired": "判定不能：スキャンを実行し、対象地域を選択してから計画を作成してください。"
 }

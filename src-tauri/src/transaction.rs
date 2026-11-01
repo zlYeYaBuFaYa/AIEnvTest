@@ -5,7 +5,7 @@ use std::{collections::BTreeSet, fs::{self, OpenOptions}, io::Write, path::{Path
 type Result<T> = std::result::Result<T, String>;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(tag="kind", content="value", deny_unknown_fields)]
-pub enum ResourceId { File(PathBuf), Registry(String), Timezone, Dns(String) }
+pub enum ResourceId { File(PathBuf), Registry(String), Timezone, Ntp, Dns(String) }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag="type", deny_unknown_fields)]
 pub enum FixStep {
@@ -14,10 +14,13 @@ pub enum FixStep {
     SetRegistry { key: String, name: String, value: String },
     RunCommand { program: String, args: Vec<String>, undo: Box<FixStep> },
     SetTimezone { zone: String },
+    SetNtp { enabled: bool },
     SetDns { iface: String, servers: Vec<String> },
 }
 impl FixStep { fn resource(&self) -> Result<ResourceId> { match self {
     Self::WriteFile{path,..}|Self::RemoveFile{path} => Ok(ResourceId::File(path.clone())),
+    Self::SetNtp{..} => Ok(ResourceId::Ntp),
+    Self::SetTimezone{zone} if crate::system_fixes::valid_zone(zone) => Ok(ResourceId::Timezone),
     _ => Err("Operation is not enabled in this release".into()),
 } } }
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -79,7 +82,7 @@ pub trait SystemAdapter: Send + Sync {
     /// One privileged batch, including rollback, per transaction.
     fn batch(&self, plan: &FixPlan, before: &[BackupEntry]) -> Result<Vec<StepStatus>> { Ok(apply_steps(self,plan,before)) }
 }
-fn value(step: &FixStep) -> Result<PreviousValue> { match step { FixStep::WriteFile{contents,..}=>Ok(PreviousValue::Text(contents.clone())), FixStep::RemoveFile{..}=>Ok(PreviousValue::Absent), _=>Err("Unsupported step".into()) } }
+fn value(step: &FixStep) -> Result<PreviousValue> { match step { FixStep::WriteFile{contents,..}=>Ok(PreviousValue::Text(contents.clone())), FixStep::RemoveFile{..}=>Ok(PreviousValue::Absent), FixStep::SetTimezone{zone}=>Ok(PreviousValue::Text(zone.clone())), FixStep::SetNtp{enabled}=>Ok(PreviousValue::Text(enabled.to_string())), _=>Err("Unsupported step".into()) } }
 fn apply_steps<A: SystemAdapter + ?Sized>(adapter: &A, plan: &FixPlan, before: &[BackupEntry]) -> Vec<StepStatus> {
     let mut statuses: Vec<StepStatus> = Vec::new();
     let mut applied = Vec::new();
@@ -178,8 +181,8 @@ impl<A: SystemAdapter> Engine<A> {
         backup.verify()?;
         let resources:BTreeSet<_>=backup.entries.iter().map(|e|e.resource.clone()).collect();
         if resources!=backup.scope.iter().cloned().collect() || resources.len()!=backup.entries.len() { return Err("Invalid backup scope".into()); }
-        let steps=backup.entries.iter().map(|e|match (&e.resource,&e.previous_value) { (ResourceId::File(path),PreviousValue::Text(contents))=>Ok(FixStep::WriteFile{path:path.clone(),contents:contents.clone()}), (ResourceId::File(path),PreviousValue::Absent)=>Ok(FixStep::RemoveFile{path:path.clone()}), _=>Err("Unsupported backup resource".into()) }).collect::<Result<Vec<_>>>()?;
-        let plan=FixPlan{id:id(),check_id:backup.check_id.clone(),steps,resources:backup.scope.clone(),requires_admin:true,preview:vec![]}; validate(&plan,&self.allowed)?;
+        let steps=backup.entries.iter().map(|e|match (&e.resource,&e.previous_value) { (ResourceId::File(path),PreviousValue::Text(contents))=>Ok(FixStep::WriteFile{path:path.clone(),contents:contents.clone()}), (ResourceId::File(path),PreviousValue::Absent)=>Ok(FixStep::RemoveFile{path:path.clone()}), (ResourceId::Timezone,PreviousValue::Text(zone))=>Ok(FixStep::SetTimezone{zone:zone.clone()}), (ResourceId::Ntp,PreviousValue::Text(state)) if matches!(state.as_str(),"true"|"false")=>Ok(FixStep::SetNtp{enabled:state=="true"}), _=>Err("Unsupported backup resource".into()) }).collect::<Result<Vec<_>>>()?;
+        let plan=FixPlan{id:id(),check_id:backup.check_id.clone(),steps,resources:backup.scope.clone(),requires_admin:backup.scope.iter().any(|r| r != &ResourceId::Timezone) || !cfg!(windows),preview:vec![]}; validate(&plan,&self.allowed)?;
         let before=self.snapshot(&backup.check_id,&backup.scope)?;
         // Recovery journal for a failed restore, excluded from normal history/restore_all.
         atomic_write(&self.dir.join("recovery").join(format!("{}.json",before.id)), &serde_json::to_vec(&before).map_err(|e|e.to_string())?)?;
@@ -204,6 +207,8 @@ impl<A: SystemAdapter> Engine<A> {
                 steps.push(match (&entry.resource, &entry.previous_value) {
                     (ResourceId::File(path), PreviousValue::Text(contents)) => FixStep::WriteFile {path:path.clone(), contents:contents.clone()},
                     (ResourceId::File(path), PreviousValue::Absent) => FixStep::RemoveFile {path:path.clone()},
+                    (ResourceId::Timezone, PreviousValue::Text(zone)) => FixStep::SetTimezone {zone:zone.clone()},
+                    (ResourceId::Ntp, PreviousValue::Text(state)) if matches!(state.as_str(),"true"|"false") => FixStep::SetNtp {enabled:state=="true"},
                     _ => return Err("Unsupported backup resource".into()),
                 });
             }
@@ -331,6 +336,18 @@ mod tests {
         let mut json=serde_json::to_value(&b).unwrap();json["unrecognized"]=serde_json::json!("tampered");
         fs::write(e.dir.join("backups").join(format!("{}.json",b.id)),serde_json::to_vec(&json).unwrap()).unwrap();
         assert!(e.load(&b.id).is_err());assert!(!e.list().unwrap()[0].integrity);
+    }
+
+    #[test] fn system_resources_restore_all_preserves_originals() {
+        let temp=Temp::new();
+        let e=Engine{dir:temp.0.clone(),adapter:Fake::default(),locks:Arc::default(),allowed:[ResourceId::Timezone,ResourceId::Ntp].into_iter().collect()};
+        e.adapter.values.lock().unwrap().insert(ResourceId::Timezone,PreviousValue::Text("UTC".into()));
+        e.adapter.values.lock().unwrap().insert(ResourceId::Ntp,PreviousValue::Text("false".into()));
+        let p=FixPlan{id:"system".into(),check_id:"system".into(),steps:vec![FixStep::SetTimezone{zone:"Asia/Tokyo".into()},FixStep::SetNtp{enabled:true}],requires_admin:true,resources:vec![ResourceId::Timezone,ResourceId::Ntp],preview:vec![]};
+        assert!(e.apply(&p).unwrap().success);
+        assert!(e.restore_all().unwrap().iter().all(|r|r.success));
+        assert_eq!(e.adapter.read(&ResourceId::Timezone).unwrap(),PreviousValue::Text("UTC".into()));
+        assert_eq!(e.adapter.read(&ResourceId::Ntp).unwrap(),PreviousValue::Text("false".into()));
     }
 
 }

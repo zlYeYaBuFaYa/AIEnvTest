@@ -273,5 +273,21 @@
   "repair.success": "事务已完成，检测结果已刷新。",
   "repair.failed": "事务失败，请查看回滚详情：",
   "repair.none": "当前没有可用的受支持修复。",
-  "repair.saved": "备份已保存。"
+  "repair.saved": "备份已保存。",
+  "repair.openSettings": "打开设置",
+  "repair.guidance": "仅提供操作指引：请在系统设置中关闭定位权限。应用不会自动更改设置，也无法还原手动更改。",
+  "repair.ntpNote": "启用网络时间并请求同步。还原会恢复之前的启用状态，不会将时钟调回原来的时间。",
+  "repair.settingsUnavailable": "无法确定：无法打开系统设置。请手动打开桌面环境的定位隐私设置。",
+  "repair.commandUnavailable": "无法确定：缺少所需的系统命令。",
+  "repair.commandFailed": "无法确定：系统命令失败或需要管理员授权。",
+  "repair.commandTimeout": "无法确定：系统命令超时。",
+  "repair.invalidCommandOutput": "无法确定：无法可靠读取系统命令输出。",
+  "repair.timezoneUnavailable": "无法确定：无法读取当前时区，已拒绝更改。",
+  "repair.timezoneInvalid": "时区值无效。",
+  "repair.timezoneVerify": "无法验证时区更改，请查看回滚详情。",
+  "repair.timezoneMapping": "无法确定：CLDR 中没有与该预设地区匹配的 Windows 时区标识。",
+  "repair.ntpUnavailable": "无法确定：无法读取网络时间的启用状态，已拒绝更改。",
+  "repair.ntpInvalid": "保存的网络时间状态无效。",
+  "repair.ntpVerify": "无法验证网络时间的启用状态，请查看回滚详情。",
+  "repair.scanRequired": "无法确定：请先运行扫描并选择目标地区，再生成此计划。"
 }

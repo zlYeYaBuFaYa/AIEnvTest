@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeSet, fs, path::{Path, PathBuf}, process::Command};
 type Result<T> = std::result::Result<T,String>;
-pub fn allowlist() -> BTreeSet<ResourceId> { [ResourceId::File(hosts_path())].into_iter().collect() }
+pub fn allowlist() -> BTreeSet<ResourceId> { [ResourceId::File(hosts_path()), ResourceId::Timezone, ResourceId::Ntp].into_iter().collect() }
 #[derive(Serialize,Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Request { version:u32, plan:FixPlan, before:Vec<BackupEntry> }
@@ -15,6 +15,8 @@ struct Response { digest:String, result:Result<Vec<StepStatus>> }
 pub struct OsAdapter { pub dir:PathBuf }
 struct LocalAdapter;
 fn read_file(resource:&ResourceId)->Result<PreviousValue> {
+    if resource == &ResourceId::Ntp { return crate::system_fixes::read_ntp(); }
+    if resource == &ResourceId::Timezone { return crate::system_fixes::read_timezone(); }
     if !allowlist().contains(resource) {return Err("Read outside allowlist".into())}
     let ResourceId::File(path)=resource else {return Err("Unsupported resource".into())};
     match fs::read_to_string(path) {Ok(text)=>Ok(PreviousValue::Text(text)),Err(e) if e.kind()==std::io::ErrorKind::NotFound=>Ok(PreviousValue::Absent),Err(e)=>Err(e.to_string())}
@@ -23,6 +25,8 @@ impl SystemAdapter for LocalAdapter {
     fn read(&self,r:&ResourceId)->Result<PreviousValue>{read_file(r)}
     fn write(&self,r:&ResourceId,v:&PreviousValue)->Result<()> {
         if !allowlist().contains(r){return Err("Write outside allowlist".into())}
+        if r == &ResourceId::Ntp { return crate::system_fixes::write_ntp(v); }
+        if r == &ResourceId::Timezone { return crate::system_fixes::write_timezone(v); }
         let ResourceId::File(path)=r else {return Err("Unsupported resource".into())};
         if fs::symlink_metadata(path).is_ok_and(|m|m.file_type().is_symlink() || !m.is_file()) {return Err("Hosts must be a regular file".into())}
         match v {PreviousValue::Text(s)=>fs::write(path,s).map_err(|e|e.to_string()),PreviousValue::Absent=>match fs::remove_file(path){Ok(())=>Ok(()),Err(e) if e.kind()==std::io::ErrorKind::NotFound=>Ok(()),Err(e)=>Err(e.to_string())}}
@@ -33,6 +37,7 @@ impl SystemAdapter for OsAdapter {
     fn write(&self,_:&ResourceId,_:&PreviousValue)->Result<()> {Err("Writes require an elevated transaction".into())}
     fn batch(&self,plan:&FixPlan,before:&[BackupEntry])->Result<Vec<StepStatus>> {
         validate(plan,&allowlist())?;
+        if !plan.requires_admin && plan.resources.iter().all(|r|r == &ResourceId::Timezone) { return LocalAdapter.batch(plan,before); }
         let request=Request{version:1,plan:plan.clone(),before:before.to_vec()};
         let bytes=serde_json::to_vec(&request).map_err(|e|e.to_string())?;
         let hash=format!("{:x}",Sha256::digest(&bytes));
@@ -135,7 +140,15 @@ pub fn entry()->Option<i32> {
         let bytes=serde_json::to_vec(&request).unwrap();let hash=format!("{:x}",Sha256::digest(&bytes));
         assert!(decode_request(&bytes,&hash).is_ok());assert!(decode_request(&bytes,"bad").is_err());
         let mut request=request;request.before.clear();assert!(validate_request(&request).is_err());
-        for step in [FixStep::SetRegistry{key:"HKLM".into(),name:"x".into(),value:"x".into()},FixStep::SetDns{iface:"eth0".into(),servers:vec![]},FixStep::SetTimezone{zone:"UTC".into()},FixStep::WriteFile{path:hosts_path().join("../evil"),contents:String::new()}] {request.plan.steps=vec![step];assert!(validate(&request.plan,&allowlist()).is_err());}
+        for step in [FixStep::SetRegistry{key:"HKLM".into(),name:"x".into(),value:"x".into()},FixStep::SetDns{iface:"eth0".into(),servers:vec![]},FixStep::SetTimezone{zone:"--invalid".into()},FixStep::WriteFile{path:hosts_path().join("../evil"),contents:String::new()}] {request.plan.steps=vec![step];assert!(validate(&request.plan,&allowlist()).is_err());}
+    }
+    #[test] fn enabled_system_steps_are_scoped() {
+        for (resource,step) in [(ResourceId::Timezone,FixStep::SetTimezone{zone:"Asia/Tokyo".into()}),(ResourceId::Ntp,FixStep::SetNtp{enabled:true})] {
+            let plan=FixPlan{id:"typed".into(),check_id:"system".into(),resources:vec![resource.clone()],steps:vec![step],requires_admin:true,preview:vec![]};
+            assert!(validate(&plan,&allowlist()).is_ok());
+            let mut wrong=plan;wrong.resources=vec![ResourceId::File(hosts_path())];
+            assert!(validate(&wrong,&allowlist()).is_err());
+        }
     }
     #[cfg(unix)]
     #[test] fn shell_quote_roundtrip() {

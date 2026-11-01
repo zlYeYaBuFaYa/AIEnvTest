@@ -1,4 +1,5 @@
 mod transaction;
+mod system_fixes;
 mod helper;
 mod repair_commands;
 mod redact;
@@ -90,7 +91,7 @@ pub fn run() {
     if let Some(code) = helper::entry() { std::process::exit(code); }
     tauri::Builder::default()
         .manage(AppState { browser: Mutex::new(None), region: Mutex::new(None), last_report: Mutex::new(None), plans: Mutex::new(Default::default()), locks: Default::default() })
-        .invoke_handler(tauri::generate_handler![list_regions, run_scan, render_markdown, write_export, reopen_browser, repair_commands::plan_fix, repair_commands::plan_fix_all_failed, repair_commands::apply_plan, repair_commands::backup, repair_commands::list_backups, repair_commands::restore, repair_commands::restore_all])
+        .invoke_handler(tauri::generate_handler![list_regions, run_scan, render_markdown, write_export, reopen_browser, repair_commands::open_location_settings, repair_commands::plan_fix, repair_commands::plan_fix_all_failed, repair_commands::apply_plan, repair_commands::backup, repair_commands::list_backups, repair_commands::restore, repair_commands::restore_all])
         .run(tauri::generate_context!())
         .expect("error while running AIEnv");
 }

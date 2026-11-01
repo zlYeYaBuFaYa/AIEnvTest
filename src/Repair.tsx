@@ -4,13 +4,13 @@ import { Button } from "@/components/ui";
 import { useI18n } from "@/lib/i18n";
 import type { ScanReport } from "@/lib/types";
 type Resource = { kind: string; value?: string };
-type Plan = { id: string; check_id: string; requires_admin: boolean; preview: {resource: Resource; before: string; after: string}[] };
+type Plan = { id: string; check_id: string; requires_admin: boolean; guidance: {type: "location_settings"} | null; preview: {resource: Resource; before: string; after: string}[] };
 type Backup = { id: string; created_at: string; check_id: string; scope: Resource[]; integrity: boolean };
 type Update = { transactions: {success: boolean; steps: {index: number; status: string; error: string | null}[]}[]; report: ScanReport | null; scan_error: string | null };
 export function useRepair(report: ScanReport | null, setReport: (r: ScanReport) => void, setError: (s: string) => void, scanning: boolean) {
   const { t } = useI18n();
   const [backups, setBackups] = useState<Backup[]>([]);
-  const [available, setAvailable] = useState(false);
+  const [available, setAvailable] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const gate = useRef(false);
   const [history, setHistory] = useState(false);
@@ -18,16 +18,16 @@ export function useRepair(report: ScanReport | null, setReport: (r: ScanReport) 
   const [notice, setNotice] = useState("");
   const blocked = busy || scanning;
   async function reload() {
-    setAvailable(false);
+    setAvailable([]);
     setBackups(await invoke<Backup[]>("list_backups"));
-    setAvailable(!!await invoke<Plan | null>("plan_fix", {checkId: "hosts"}));
+    setAvailable(["hosts", ...(report ? ["timezone", "clock"] : [])]);
   }
   useEffect(() => { void reload().catch(e => setError(String(e))); }, [report]);
   async function perform(work: () => Promise<void>) {
     if (gate.current) return;
     gate.current = true; setBusy(true); setError(""); setNotice("");
-    try { await work(); } catch(e) { setError(String(e)); }
-    finally { try { await reload(); } catch(e) { setError(String(e)); } gate.current = false; setBusy(false); }
+    try { await work(); } catch(e) { const error = String(e); setError(error.startsWith("repair.") ? t(error) : error); }
+    finally { try { await reload(); } catch(e) { const error = String(e); setError(error.startsWith("repair.") ? t(error) : error); } gate.current = false; setBusy(false); }
   }
   async function preview(checkId?: string) {
     await perform(async () => {
@@ -40,12 +40,15 @@ export function useRepair(report: ScanReport | null, setReport: (r: ScanReport) 
     const action = modal; setModal(null);
     await perform(async () => {
       const updates: Update[] = [];
-      if (action.plans) for (const plan of action.plans) updates.push(await invoke<Update>("apply_plan", {planId: plan.id}));
+      if (action.plans) for (const plan of action.plans) {
+        if (plan.guidance) {await invoke("open_location_settings"); setNotice(t("repair.guidance"));}
+        else updates.push(await invoke<Update>("apply_plan", {planId: plan.id}));
+      }
       else updates.push(await invoke<Update>(action.all ? "restore_all" : "restore", {backupId: action.backupId}));
       for (const update of updates) {
         if (update.report) setReport(update.report);
         if (update.scan_error) setError(update.scan_error);
-        if (update.transactions.some(r => !r.success)) setError(t("repair.failed") + " " + update.transactions.flatMap(r => r.steps.filter(s => s.error).map(s => `${s.index + 1}: ${s.status}: ${s.error}`)).join("; "));
+        if (update.transactions.some(r => !r.success)) setError(t("repair.failed") + " " + update.transactions.flatMap(r => r.steps.filter(s => s.error).map(s => `${s.index + 1}: ${s.status}: ${s.error?.startsWith("repair.") ? t(s.error) : s.error}`)).join("; "));
         else if (!update.scan_error) setNotice(t("repair.success"));
       }
     });
@@ -53,8 +56,8 @@ export function useRepair(report: ScanReport | null, setReport: (r: ScanReport) 
   const actions = (checkId: string) => {
     const latest = backups.find(b => b.check_id === checkId && b.integrity);
     return <div className="mt-3 flex flex-wrap gap-2">
-      <Button size="sm" variant="outline" disabled={blocked || checkId !== "hosts" || !available} onClick={() => void preview(checkId)}>{t("repair.fix")}</Button>
-      <Button size="sm" variant="outline" disabled={blocked || checkId !== "hosts"} onClick={() => void perform(async () => { await invoke("backup", {checkId}); setNotice(t("repair.saved")); })}>{t("repair.backup")}</Button>
+      <Button size="sm" variant="outline" disabled={blocked || (checkId !== "location" && !available.includes(checkId))} onClick={() => void preview(checkId)}>{t(checkId === "location" ? "repair.openSettings" : "repair.fix")}</Button>
+      <Button size="sm" variant="outline" disabled={blocked || !["hosts", "timezone", "clock"].includes(checkId)} onClick={() => void perform(async () => { await invoke("backup", {checkId}); setNotice(t("repair.saved")); })}>{t("repair.backup")}</Button>
       <Button size="sm" variant="outline" disabled={blocked || !latest} onClick={() => setModal({backupId: latest?.id})}>{t("repair.restore")}</Button>
     </div>;
   };
@@ -77,9 +80,10 @@ export function useRepair(report: ScanReport | null, setReport: (r: ScanReport) 
           <Button size="sm" variant="outline" disabled={blocked || !b.integrity} onClick={() => setModal({backupId: b.id})}>{t("repair.restore")}</Button>
         </article>)}
     </HistoryDrawer>}
-    {modal && <Confirmation title={t(modal.plans ? "repair.preview" : modal.all ? "repair.restoreAll" : "repair.restore")} close={() => setModal(null)} confirm={() => void confirm()}>
-      <p className="mb-4 text-sm text-muted">{t(modal.plans ? "repair.confirmFix" : modal.all ? "repair.home" : "repair.confirmRestore")}</p>
+    {modal && <Confirmation title={t(modal.plans ? "repair.preview" : modal.all ? "repair.restoreAll" : "repair.restore")} close={() => setModal(null)} confirm={() => void confirm()} guidance={modal.plans?.every(p => !!p.guidance)}>
+      <p className="mb-4 text-sm text-muted">{t(modal.plans?.every(p => !!p.guidance) ? "repair.guidance" : modal.plans ? "repair.confirmFix" : modal.all ? "repair.home" : "repair.confirmRestore")}</p>
       {modal.plans?.map(plan => <div key={plan.id} className="space-y-3">
+        {plan.check_id === "clock" && <p className="text-sm text-muted">{t("repair.ntpNote")}</p>}
         {plan.requires_admin && <span className="inline-block rounded-full bg-notice-risk-bg px-3 py-1 text-xs text-notice-risk-ink">{t("repair.admin")}</span>}
         {plan.preview.map((change, i) => <div key={i} className="rounded-2xl border border-line bg-paper p-3">
           <p className="mb-2 break-all font-mono text-sm">{change.resource.value ?? change.resource.kind}</p>
@@ -90,13 +94,13 @@ export function useRepair(report: ScanReport | null, setReport: (r: ScanReport) 
   </>;
   return {actions, sidebar, overlays, busy: busy || !!modal, historyButton: <Button size="sm" variant="outline" disabled={blocked} onClick={() => setHistory(true)}>{t("repair.history")}</Button>};
 }
-function Confirmation({title, children, close, confirm}: {title: string; children: React.ReactNode; close: () => void; confirm: () => void}) {
+function Confirmation({title, children, close, confirm, guidance}: {guidance?: boolean; title: string; children: React.ReactNode; close: () => void; confirm: () => void}) {
   const { t } = useI18n();
   const dialog = useRef<HTMLDialogElement>(null);
   useEffect(() => { const el = dialog.current; el?.showModal(); return () => { el?.close(); }; }, []);
   return <dialog ref={dialog} aria-label={title} onCancel={close} className="max-h-[85vh] w-[90vw] max-w-3xl overflow-auto rounded-3xl border border-line bg-card p-6 text-ink shadow-card backdrop:bg-ink/30">
     <h2 className="mb-4 font-serif text-2xl">{title}</h2>{children}
-    <div className="mt-6 flex justify-end gap-2"><Button variant="outline" onClick={close}>{t("repair.cancel")}</Button><Button onClick={confirm}>{t("repair.confirm")}</Button></div>
+    <div className="mt-6 flex justify-end gap-2"><Button variant="outline" onClick={close}>{t("repair.cancel")}</Button><Button onClick={confirm}>{t(guidance ? "repair.openSettings" : "repair.confirm")}</Button></div>
   </dialog>;
 }
 
