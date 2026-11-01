@@ -11,7 +11,7 @@ impl Os {
 }
 #[derive(Debug, PartialEq)]
 pub struct Recipe { pub program: &'static str, pub args: Vec<String> }
-fn recipe(program: &'static str, args: &[&str]) -> Recipe {Recipe {program, args:args.iter().map(|s|s.to_string()).collect()}}
+pub(crate) fn recipe(program: &'static str, args: &[&str]) -> Recipe {Recipe {program, args:args.iter().map(|s|s.to_string()).collect()}}
 pub fn valid_zone(zone: &str) -> bool {
     // Also accept previously installed zones for restoration, including tzutil's DST suffix.
     !zone.is_empty() && zone.len() <= 128 && zone.as_bytes()[0].is_ascii_alphanumeric() && zone.trim()==zone && !zone.contains("..") && zone.bytes().all(|c|c.is_ascii_alphanumeric() || b"/_+- .()".contains(&c))
@@ -27,18 +27,27 @@ pub fn timezone_recipe(os: Os, zone: Option<&str>) -> Result<Recipe> {
         (Os::Windows,Some(z))=>recipe("tzutil", &["/s",z]),
     })
 }
-fn run(recipe: Recipe) -> Result<String> {
+pub(crate) fn run(recipe: Recipe) -> Result<String> {
     // Bound runtime, require successful exit, and never include raw command output in errors.
     let executable=match recipe.program {
         "timedatectl"=>"/usr/bin/timedatectl", "systemctl"=>"/usr/bin/systemctl",
         "systemsetup"=>"/usr/sbin/systemsetup", "sntp"=>"/usr/bin/sntp", "open"=>"/usr/bin/open",
+        "nft"=>"/usr/sbin/nft", "pfctl"=>"/sbin/pfctl",
+        "sysctl"=>"/usr/sbin/sysctl",
+        "nmcli"=>"/usr/bin/nmcli", "localectl"=>"/usr/bin/localectl", "gsettings"=>"/usr/bin/gsettings",
+        "networksetup"=>"/usr/sbin/networksetup", "defaults"=>"/usr/bin/defaults", "plutil"=>"/usr/bin/plutil",
         "gnome-control-center"=>"/usr/bin/gnome-control-center",
         "tzutil"=>r"C:\Windows\System32\tzutil.exe", "w32tm"=>r"C:\Windows\System32\w32tm.exe",
         "powershell"=>r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
         "explorer.exe"=>r"C:\Windows\explorer.exe",
         _=>return Err("Command outside fixed allowlist".into()),
     };
-    let mut child=Command::new(executable).args(recipe.args).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().map_err(|_|"repair.commandUnavailable".to_string())?;
+    let capture_stderr=recipe.program=="pfctl" && recipe.args==["-E"];
+    let mut child=Command::new(executable).args(recipe.args).stdout(Stdio::piped()).stderr(if capture_stderr{Stdio::piped()}else{Stdio::null()}).spawn().map_err(|_|"repair.commandUnavailable".to_string())?;
+    use std::io::Read;
+    let stdout=child.stdout.take().ok_or("repair.invalidCommandOutput")?;
+    let reader=std::thread::spawn(move ||{let mut bytes=Vec::new();stdout.take(4*1024*1024).read_to_end(&mut bytes).map(|_|bytes)});
+    let stderr=child.stderr.take().map(|stderr|std::thread::spawn(move ||{let mut bytes=Vec::new();stderr.take(1024*1024).read_to_end(&mut bytes).map(|_|bytes)}));
     let start=Instant::now();
     loop {
         match child.try_wait() {
@@ -48,8 +57,9 @@ fn run(recipe: Recipe) -> Result<String> {
             _=>{let _=child.kill();let _=child.wait();return Err("repair.commandTimeout".into())}
         }
     }
-    let output=child.wait_with_output().map_err(|_|"repair.invalidCommandOutput".to_string())?;
-    String::from_utf8(output.stdout).map_err(|_|"repair.invalidCommandOutput".into())
+    let mut bytes=reader.join().map_err(|_|"repair.invalidCommandOutput")?.map_err(|_|"repair.invalidCommandOutput")?;
+    if let Some(stderr)=stderr{bytes.extend(stderr.join().map_err(|_|"repair.invalidCommandOutput")?.map_err(|_|"repair.invalidCommandOutput")?)}
+    String::from_utf8(bytes).map_err(|_|"repair.invalidCommandOutput".into())
 }
 pub fn read_timezone() -> Result<PreviousValue> {
     #[cfg(target_os="macos")] {

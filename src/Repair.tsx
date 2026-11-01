@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { Button } from "@/components/ui";
 import { useI18n } from "@/lib/i18n";
 import type { ScanReport } from "@/lib/types";
+type TunnelException = { endpoint: string; port: number; resolver: string };
 type Resource = { kind: string; value?: string };
 type Plan = { id: string; check_id: string; requires_admin: boolean; guidance: {type: "location_settings"} | null; preview: {resource: Resource; before: string; after: string}[] };
 type Backup = { id: string; created_at: string; check_id: string; scope: Resource[]; integrity: boolean };
@@ -15,12 +16,17 @@ export function useRepair(report: ScanReport | null, setReport: (r: ScanReport) 
   const gate = useRef(false);
   const [history, setHistory] = useState(false);
   const [modal, setModal] = useState<{plans?: Plan[]; backupId?: string; all?: boolean} | null>(null);
+  const [udpTarget, setUdpTarget] = useState<string | undefined>("udp_quic");
+  const [udpForm, setUdpForm] = useState(false);
+  const [udpEndpoint, setUdpEndpoint] = useState("");
+  const [udpPort, setUdpPort] = useState("51820");
+  const [udpResolver, setUdpResolver] = useState("");
   const [notice, setNotice] = useState("");
   const blocked = busy || scanning;
   async function reload() {
     setAvailable([]);
     setBackups(await invoke<Backup[]>("list_backups"));
-    setAvailable(["hosts", ...(report ? ["timezone", "clock"] : [])]);
+    setAvailable(["hosts", ...(report ? ["timezone", "clock", "locale", "dns_configured", "exit_ipv6", "system_proxy", "udp_quic", ...(report.os === "windows" ? ["location"] : [])] : [])]);
   }
   useEffect(() => { void reload().catch(e => setError(String(e))); }, [report]);
   async function perform(work: () => Promise<void>) {
@@ -29,9 +35,10 @@ export function useRepair(report: ScanReport | null, setReport: (r: ScanReport) 
     try { await work(); } catch(e) { const error = String(e); setError(error.startsWith("repair.") ? t(error) : error); }
     finally { try { await reload(); } catch(e) { const error = String(e); setError(error.startsWith("repair.") ? t(error) : error); } gate.current = false; setBusy(false); }
   }
-  async function preview(checkId?: string) {
+  async function preview(checkId?: string, udp?: TunnelException) {
+    if (!udp && (checkId === "udp_quic" || (!checkId && report?.checks.some(c => c.id === "udp_quic" && c.status === "fail")))) { setUdpTarget(checkId); setUdpForm(true); return; }
     await perform(async () => {
-      const plans = checkId ? [await invoke<Plan | null>("plan_fix", {checkId})].filter((p): p is Plan => !!p) : await invoke<Plan[]>("plan_fix_all_failed");
+      const plans = checkId ? [await invoke<Plan | null>("plan_fix", {checkId, udp: udp ?? null})].filter((p): p is Plan => !!p) : await invoke<Plan[]>("plan_fix_all_failed", {udp: udp ?? null});
       if (plans.length) setModal({plans}); else setNotice(t("repair.none"));
     });
   }
@@ -56,8 +63,8 @@ export function useRepair(report: ScanReport | null, setReport: (r: ScanReport) 
   const actions = (checkId: string) => {
     const latest = backups.find(b => b.check_id === checkId && b.integrity);
     return <div className="mt-3 flex flex-wrap gap-2">
-      <Button size="sm" variant="outline" disabled={blocked || (checkId !== "location" && !available.includes(checkId))} onClick={() => void preview(checkId)}>{t(checkId === "location" ? "repair.openSettings" : "repair.fix")}</Button>
-      <Button size="sm" variant="outline" disabled={blocked || !["hosts", "timezone", "clock"].includes(checkId)} onClick={() => void perform(async () => { await invoke("backup", {checkId}); setNotice(t("repair.saved")); })}>{t("repair.backup")}</Button>
+      <Button size="sm" variant="outline" disabled={blocked || (checkId !== "location" && !available.includes(checkId))} onClick={() => void preview(checkId)}>{t(checkId === "location" && report?.os !== "windows" ? "repair.openSettings" : "repair.fix")}</Button>
+      <Button size="sm" variant="outline" disabled={blocked || !["hosts", "timezone", "clock", "locale", "dns_configured", "exit_ipv6", "system_proxy", "udp_quic", ...(report?.os === "windows" ? ["location"] : [])].includes(checkId)} onClick={() => void perform(async () => { await invoke("backup", {checkId}); setNotice(t("repair.saved")); })}>{t("repair.backup")}</Button>
       <Button size="sm" variant="outline" disabled={blocked || !latest} onClick={() => setModal({backupId: latest?.id})}>{t("repair.restore")}</Button>
     </div>;
   };
@@ -67,6 +74,10 @@ export function useRepair(report: ScanReport | null, setReport: (r: ScanReport) 
     {notice && <p role="status" className="text-sm text-muted">{notice}</p>}
   </div>;
   const overlays = <>
+    {udpForm && <Confirmation title={t("repair.udpTitle")} close={() => setUdpForm(false)} confirm={() => {setUdpForm(false); void preview(udpTarget, {endpoint: udpEndpoint.trim(), port: Number(udpPort), resolver: udpResolver.trim()});}}>
+      <p className="mb-4 text-sm text-muted">{t("repair.udpExplanation")}</p>
+      {[["repair.udpEndpoint", udpEndpoint, setUdpEndpoint], ["repair.udpPort", udpPort, setUdpPort], ["repair.udpResolver", udpResolver, setUdpResolver]].map(([label, value, setter]) => <label key={String(label)} className="mb-3 block text-sm">{t(String(label))}<input className="mt-1 block w-full rounded-lg border border-line bg-paper p-2 text-ink" value={String(value)} onChange={e => (setter as (v: string) => void)(e.target.value)} /></label>)}
+    </Confirmation>}
     {history && <HistoryDrawer title={t("repair.history")} close={() => setHistory(false)}>
         <div className="flex items-center justify-between gap-3"><h2 className="font-serif text-2xl">{t("repair.history")}</h2><Button variant="outline" size="sm" onClick={() => setHistory(false)}>{t("repair.close")}</Button></div>
         <p className="my-4 text-sm text-muted">{t("repair.home")}</p>
@@ -83,6 +94,7 @@ export function useRepair(report: ScanReport | null, setReport: (r: ScanReport) 
     {modal && <Confirmation title={t(modal.plans ? "repair.preview" : modal.all ? "repair.restoreAll" : "repair.restore")} close={() => setModal(null)} confirm={() => void confirm()} guidance={modal.plans?.every(p => !!p.guidance)}>
       <p className="mb-4 text-sm text-muted">{t(modal.plans?.every(p => !!p.guidance) ? "repair.guidance" : modal.plans ? "repair.confirmFix" : modal.all ? "repair.home" : "repair.confirmRestore")}</p>
       {modal.plans?.map(plan => <div key={plan.id} className="space-y-3">
+        {plan.check_id === "locale" && <p className="text-sm text-muted">{t("repair.logoutNote")}</p>}
         {plan.check_id === "clock" && <p className="text-sm text-muted">{t("repair.ntpNote")}</p>}
         {plan.requires_admin && <span className="inline-block rounded-full bg-notice-risk-bg px-3 py-1 text-xs text-notice-risk-ink">{t("repair.admin")}</span>}
         {plan.preview.map((change, i) => <div key={i} className="rounded-2xl border border-line bg-paper p-3">
@@ -92,7 +104,7 @@ export function useRepair(report: ScanReport | null, setReport: (r: ScanReport) 
       </div>)}
     </Confirmation>}
   </>;
-  return {actions, sidebar, overlays, busy: busy || !!modal, historyButton: <Button size="sm" variant="outline" disabled={blocked} onClick={() => setHistory(true)}>{t("repair.history")}</Button>};
+  return {actions, sidebar, overlays, busy: busy || !!modal || udpForm, historyButton: <Button size="sm" variant="outline" disabled={blocked} onClick={() => setHistory(true)}>{t("repair.history")}</Button>};
 }
 function Confirmation({title, children, close, confirm, guidance}: {guidance?: boolean; title: string; children: React.ReactNode; close: () => void; confirm: () => void}) {
   const { t } = useI18n();

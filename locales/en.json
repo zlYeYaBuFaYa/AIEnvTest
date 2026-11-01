@@ -289,5 +289,18 @@
   "repair.ntpUnavailable": "Inconclusive: the network time enabled state could not be observed; changes are refused.",
   "repair.ntpInvalid": "The saved network time state is invalid.",
   "repair.ntpVerify": "The network time enabled state could not be verified. Review rollback details.",
-  "repair.scanRequired": "Inconclusive: run a scan and select a target region before creating this plan."
+  "repair.scanRequired": "Inconclusive: run a scan and select a target region before creating this plan.",
+  "repair.settingsUnknown": "Inconclusive: the current setting or supported system service could not be observed safely; no changes were made.",
+  "repair.dnsGate": "Inconclusive: DNS changes require a scan from the last two minutes confirming an overseas exit in the selected region. Run a fresh scan.",
+  "repair.logoutNote": "Sign out and sign back in for language and regional changes to take full effect.",
+  "repair.udpPrerequisite": "Inconclusive: specify the tunnel server IP, UDP port and tunnel resolver IP, and ensure physical adapters can be identified. No firewall changes were made.",
+  "repair.udpOwned": "Inconclusive: the reserved firewall scope contains unrecognized changes or its ownership cannot be verified. Restore is refused to preserve other rules.",
+  "repair.udpPfHook": "Inconclusive: pf needs a reachable standard com.apple/* anchor hook with no earlier quick rules or other anchors. The main ruleset was left unchanged.",
+  "repair.udpTitle": "Tunnel exceptions for UDP blocking",
+  "repair.udpExplanation": "Enter the tunnel’s actual server IP and UDP port, and its resolver IP. These are the only UDP exceptions besides DHCP on physical adapters. TCP tunnels can use their configured server port; TCP traffic is unaffected. Keep this information current if the tunnel endpoint changes. On macOS, existing UDP states must match the exceptions. Otherwise, close the affected applications and let their states expire before retrying; AIEnv never flushes tunnel states.",
+  "repair.udpEndpoint": "Tunnel server IP",
+  "repair.udpPort": "Tunnel server UDP port",
+  "repair.udpResolver": "Tunnel resolver IP",
+  "repair.udpRestoreFirst": "Restore the current AIEnv UDP policy before changing its tunnel exceptions or physical adapters.",
+  "repair.udpExisting": "Inconclusive: PF has existing UDP states outside the tunnel, resolver or DHCP exceptions, or their destinations could not be verified. Close the affected applications, let their states expire, then retry. Tunnel states were preserved."
 }

@@ -5,7 +5,7 @@ use std::{collections::BTreeSet, fs::{self, OpenOptions}, io::Write, path::{Path
 type Result<T> = std::result::Result<T, String>;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(tag="kind", content="value", deny_unknown_fields)]
-pub enum ResourceId { File(PathBuf), Registry(String), Timezone, Ntp, Dns(String) }
+pub enum ResourceId { File(PathBuf), Registry(String), Timezone, Ntp, Udp, Setting(crate::system_settings::Setting), Dns(String) }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag="type", deny_unknown_fields)]
 pub enum FixStep {
@@ -15,10 +15,14 @@ pub enum FixStep {
     RunCommand { program: String, args: Vec<String>, undo: Box<FixStep> },
     SetTimezone { zone: String },
     SetNtp { enabled: bool },
+    SetUdp { value: String },
+    SetSetting { setting: crate::system_settings::Setting, value: String },
     SetDns { iface: String, servers: Vec<String> },
 }
-impl FixStep { fn resource(&self) -> Result<ResourceId> { match self {
+impl FixStep { pub(crate) fn resource(&self) -> Result<ResourceId> { match self {
     Self::WriteFile{path,..}|Self::RemoveFile{path} => Ok(ResourceId::File(path.clone())),
+    Self::SetSetting{setting,value} => {crate::system_settings::validate_value(*setting,value)?; Ok(ResourceId::Setting(*setting))},
+    Self::SetUdp{value} => {crate::udp_fix::validate(value)?;Ok(ResourceId::Udp)},
     Self::SetNtp{..} => Ok(ResourceId::Ntp),
     Self::SetTimezone{zone} if crate::system_fixes::valid_zone(zone) => Ok(ResourceId::Timezone),
     _ => Err("Operation is not enabled in this release".into()),
@@ -82,7 +86,7 @@ pub trait SystemAdapter: Send + Sync {
     /// One privileged batch, including rollback, per transaction.
     fn batch(&self, plan: &FixPlan, before: &[BackupEntry]) -> Result<Vec<StepStatus>> { Ok(apply_steps(self,plan,before)) }
 }
-fn value(step: &FixStep) -> Result<PreviousValue> { match step { FixStep::WriteFile{contents,..}=>Ok(PreviousValue::Text(contents.clone())), FixStep::RemoveFile{..}=>Ok(PreviousValue::Absent), FixStep::SetTimezone{zone}=>Ok(PreviousValue::Text(zone.clone())), FixStep::SetNtp{enabled}=>Ok(PreviousValue::Text(enabled.to_string())), _=>Err("Unsupported step".into()) } }
+fn value(step: &FixStep) -> Result<PreviousValue> { match step { FixStep::SetUdp{value}=>Ok(PreviousValue::Text(value.clone())), FixStep::SetSetting{value,..}=>Ok(PreviousValue::Text(value.clone())), FixStep::WriteFile{contents,..}=>Ok(PreviousValue::Text(contents.clone())), FixStep::RemoveFile{..}=>Ok(PreviousValue::Absent), FixStep::SetTimezone{zone}=>Ok(PreviousValue::Text(zone.clone())), FixStep::SetNtp{enabled}=>Ok(PreviousValue::Text(enabled.to_string())), _=>Err("Unsupported step".into()) } }
 fn apply_steps<A: SystemAdapter + ?Sized>(adapter: &A, plan: &FixPlan, before: &[BackupEntry]) -> Vec<StepStatus> {
     let mut statuses: Vec<StepStatus> = Vec::new();
     let mut applied = Vec::new();
@@ -181,8 +185,8 @@ impl<A: SystemAdapter> Engine<A> {
         backup.verify()?;
         let resources:BTreeSet<_>=backup.entries.iter().map(|e|e.resource.clone()).collect();
         if resources!=backup.scope.iter().cloned().collect() || resources.len()!=backup.entries.len() { return Err("Invalid backup scope".into()); }
-        let steps=backup.entries.iter().map(|e|match (&e.resource,&e.previous_value) { (ResourceId::File(path),PreviousValue::Text(contents))=>Ok(FixStep::WriteFile{path:path.clone(),contents:contents.clone()}), (ResourceId::File(path),PreviousValue::Absent)=>Ok(FixStep::RemoveFile{path:path.clone()}), (ResourceId::Timezone,PreviousValue::Text(zone))=>Ok(FixStep::SetTimezone{zone:zone.clone()}), (ResourceId::Ntp,PreviousValue::Text(state)) if matches!(state.as_str(),"true"|"false")=>Ok(FixStep::SetNtp{enabled:state=="true"}), _=>Err("Unsupported backup resource".into()) }).collect::<Result<Vec<_>>>()?;
-        let plan=FixPlan{id:id(),check_id:backup.check_id.clone(),steps,resources:backup.scope.clone(),requires_admin:backup.scope.iter().any(|r| r != &ResourceId::Timezone) || !cfg!(windows),preview:vec![]}; validate(&plan,&self.allowed)?;
+        let steps=backup.entries.iter().map(|e|match (&e.resource,&e.previous_value) { (ResourceId::Udp,PreviousValue::Text(value))=>Ok(FixStep::SetUdp{value:value.clone()}), (ResourceId::Setting(setting),PreviousValue::Text(value))=>Ok(FixStep::SetSetting{setting:*setting,value:value.clone()}), (ResourceId::File(path),PreviousValue::Text(contents))=>Ok(FixStep::WriteFile{path:path.clone(),contents:contents.clone()}), (ResourceId::File(path),PreviousValue::Absent)=>Ok(FixStep::RemoveFile{path:path.clone()}), (ResourceId::Timezone,PreviousValue::Text(zone))=>Ok(FixStep::SetTimezone{zone:zone.clone()}), (ResourceId::Ntp,PreviousValue::Text(state)) if matches!(state.as_str(),"true"|"false")=>Ok(FixStep::SetNtp{enabled:state=="true"}), _=>Err("Unsupported backup resource".into()) }).collect::<Result<Vec<_>>>()?;
+        let plan=FixPlan{id:id(),check_id:backup.check_id.clone(),steps,resources:backup.scope.clone(),requires_admin:backup.scope.iter().any(crate::system_settings::requires_admin),preview:vec![]}; validate(&plan,&self.allowed)?;
         let before=self.snapshot(&backup.check_id,&backup.scope)?;
         // Recovery journal for a failed restore, excluded from normal history/restore_all.
         atomic_write(&self.dir.join("recovery").join(format!("{}.json",before.id)), &serde_json::to_vec(&before).map_err(|e|e.to_string())?)?;
@@ -205,6 +209,8 @@ impl<A: SystemAdapter> Engine<A> {
             }
             for entry in &backup.entries {
                 steps.push(match (&entry.resource, &entry.previous_value) {
+                    (ResourceId::Udp, PreviousValue::Text(value)) => FixStep::SetUdp{value:value.clone()},
+                    (ResourceId::Setting(setting), PreviousValue::Text(value)) => FixStep::SetSetting{setting:*setting,value:value.clone()},
                     (ResourceId::File(path), PreviousValue::Text(contents)) => FixStep::WriteFile {path:path.clone(), contents:contents.clone()},
                     (ResourceId::File(path), PreviousValue::Absent) => FixStep::RemoveFile {path:path.clone()},
                     (ResourceId::Timezone, PreviousValue::Text(zone)) => FixStep::SetTimezone {zone:zone.clone()},

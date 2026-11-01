@@ -289,5 +289,18 @@
   "repair.ntpUnavailable": "판단 불가: 네트워크 시간의 활성화 상태를 확인할 수 없어 변경을 거부했습니다.",
   "repair.ntpInvalid": "저장된 네트워크 시간 상태가 유효하지 않습니다.",
   "repair.ntpVerify": "네트워크 시간의 활성화 상태를 확인할 수 없습니다. 롤백 세부 정보를 확인하세요.",
-  "repair.scanRequired": "판단 불가: 이 계획을 만들기 전에 검사를 실행하고 대상 지역을 선택하세요."
+  "repair.scanRequired": "판단 불가: 이 계획을 만들기 전에 검사를 실행하고 대상 지역을 선택하세요.",
+  "repair.settingsUnknown": "판단 불가: 현재 설정을 안전하게 읽을 수 없거나 필요한 시스템 서비스를 사용할 수 없습니다. 변경하지 않았습니다.",
+  "repair.dnsGate": "판단 불가: DNS를 변경하려면 최근 2분 이내의 검사에서 선택한 해외 지역의 출구를 확인해야 합니다. 다시 검사하세요.",
+  "repair.logoutNote": "언어 및 지역 변경을 완전히 적용하려면 로그아웃한 후 다시 로그인하세요.",
+  "repair.udpPrerequisite": "판단 불가: 터널 서버 IP, UDP 포트 및 터널 DNS IP를 입력하고 물리 어댑터를 식별할 수 있는지 확인하세요. 방화벽은 변경하지 않았습니다.",
+  "repair.udpOwned": "판단 불가: 전용 방화벽 영역에 알 수 없는 변경이 있거나 소유권을 확인할 수 없습니다. 다른 규칙을 보호하기 위해 복원을 중단했습니다.",
+  "repair.udpPfHook": "판단 불가: pf에는 도달 가능한 표준 com.apple/* 앵커가 필요하며, 그 앞에 quick 규칙이나 다른 앵커가 없어야 합니다. 기본 규칙은 변경하지 않았습니다.",
+  "repair.udpTitle": "UDP 차단 시 터널 예외",
+  "repair.udpExplanation": "터널에서 실제로 사용하는 서버 IP, UDP 포트 및 DNS IP를 입력하세요. 물리 어댑터에서는 DHCP와 이 예외에 해당하는 UDP만 허용합니다. TCP 터널은 설정된 서버 포트를 입력하면 됩니다. TCP 통신에는 영향을 주지 않습니다. 터널의 접속 대상이 바뀌면 이 정보도 갱신하세요. macOS에서는 기존 UDP 연결이 예외 규칙에 해당해야 합니다. 그렇지 않으면 해당 앱을 종료하고 연결 상태가 만료된 후 다시 시도하세요. AIEnv는 터널 연결 상태를 삭제하지 않습니다.",
+  "repair.udpEndpoint": "터널 서버 IP",
+  "repair.udpPort": "터널 서버 UDP 포트",
+  "repair.udpResolver": "터널 DNS IP",
+  "repair.udpRestoreFirst": "터널 예외나 물리 어댑터를 변경하기 전에 현재 AIEnv UDP 정책을 복원하세요.",
+  "repair.udpExisting": "판단 불가: PF에 터널, DNS 또는 DHCP 예외에 해당하지 않는 UDP 연결이 있거나 연결 대상을 확인할 수 없습니다. 해당 앱을 종료하고 연결 상태가 만료된 후 다시 시도하세요. 터널 연결 상태는 유지했습니다."
 }

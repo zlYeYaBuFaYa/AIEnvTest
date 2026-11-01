@@ -5,16 +5,18 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeSet, fs, path::{Path, PathBuf}, process::Command};
 type Result<T> = std::result::Result<T,String>;
-pub fn allowlist() -> BTreeSet<ResourceId> { [ResourceId::File(hosts_path()), ResourceId::Timezone, ResourceId::Ntp].into_iter().collect() }
+pub fn allowlist() -> BTreeSet<ResourceId> { [ResourceId::File(hosts_path()), ResourceId::Timezone, ResourceId::Ntp, ResourceId::Udp].into_iter().chain(crate::system_settings::Setting::ALL.into_iter().map(ResourceId::Setting)).collect() }
 #[derive(Serialize,Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Request { version:u32, plan:FixPlan, before:Vec<BackupEntry> }
+struct Request { version:u32, plan:FixPlan, before:Vec<BackupEntry>, #[serde(default)] read_only:bool }
 #[derive(Serialize,Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Response { digest:String, result:Result<Vec<StepStatus>> }
+struct Response { digest:String, result:Result<Vec<StepStatus>>, #[serde(default)] snapshot:Option<PreviousValue> }
 pub struct OsAdapter { pub dir:PathBuf }
 struct LocalAdapter;
 fn read_file(resource:&ResourceId)->Result<PreviousValue> {
+    if resource==&ResourceId::Udp{return crate::udp_fix::read()}
+    if let ResourceId::Setting(setting)=resource {return crate::system_settings::read(*setting)}
     if resource == &ResourceId::Ntp { return crate::system_fixes::read_ntp(); }
     if resource == &ResourceId::Timezone { return crate::system_fixes::read_timezone(); }
     if !allowlist().contains(resource) {return Err("Read outside allowlist".into())}
@@ -25,6 +27,8 @@ impl SystemAdapter for LocalAdapter {
     fn read(&self,r:&ResourceId)->Result<PreviousValue>{read_file(r)}
     fn write(&self,r:&ResourceId,v:&PreviousValue)->Result<()> {
         if !allowlist().contains(r){return Err("Write outside allowlist".into())}
+        if r==&ResourceId::Udp{return crate::udp_fix::write(v)}
+        if let ResourceId::Setting(setting)=r {return crate::system_settings::write(*setting,v)}
         if r == &ResourceId::Ntp { return crate::system_fixes::write_ntp(v); }
         if r == &ResourceId::Timezone { return crate::system_fixes::write_timezone(v); }
         let ResourceId::File(path)=r else {return Err("Unsupported resource".into())};
@@ -33,12 +37,44 @@ impl SystemAdapter for LocalAdapter {
     }
 }
 impl SystemAdapter for OsAdapter {
-    fn read(&self,r:&ResourceId)->Result<PreviousValue>{read_file(r)}
+    fn read(&self,r:&ResourceId)->Result<PreviousValue>{
+        if (cfg!(target_os="macos") && r==&ResourceId::Ntp) || r==&ResourceId::Udp {
+            let plan=FixPlan{id:"read-ntp".into(),check_id:"clock".into(),steps:vec![if r==&ResourceId::Udp{FixStep::SetUdp{value:"null".into()}}else{FixStep::SetNtp{enabled:true}}],requires_admin:true,resources:vec![r.clone()],preview:vec![]};
+            return self.exchange(Request{version:1,plan,before:vec![],read_only:true})?.snapshot.ok_or("repair.ntpUnavailable".into())
+        }
+        read_file(r)
+    }
     fn write(&self,_:&ResourceId,_:&PreviousValue)->Result<()> {Err("Writes require an elevated transaction".into())}
     fn batch(&self,plan:&FixPlan,before:&[BackupEntry])->Result<Vec<StepStatus>> {
         validate(plan,&allowlist())?;
-        if !plan.requires_admin && plan.resources.iter().all(|r|r == &ResourceId::Timezone) { return LocalAdapter.batch(plan,before); }
-        let request=Request{version:1,plan:plan.clone(),before:before.to_vec()};
+        if plan.resources.iter().all(|r|!crate::system_settings::requires_admin(r)) { return LocalAdapter.batch(plan,before); }
+        if plan.resources.iter().any(|r|!crate::system_settings::requires_admin(r)) {
+            // User preferences must stay in the caller's account, even during restore-all.
+            let user_resources=plan.resources.iter().filter(|r|!crate::system_settings::requires_admin(r)).cloned().collect::<Vec<_>>();
+            let user_indices=plan.steps.iter().enumerate().filter_map(|(i,s)|s.resource().ok().filter(|r|user_resources.contains(r)).map(|_|i)).collect::<Vec<_>>();
+            let admin_indices=(0..plan.steps.len()).filter(|i|!user_indices.contains(i)).collect::<Vec<_>>();
+            let subplan=|indices:&Vec<usize>,resources:Vec<ResourceId>| FixPlan{id:plan.id.clone(),check_id:plan.check_id.clone(),steps:indices.iter().map(|i|plan.steps[*i].clone()).collect(),requires_admin:true,resources,preview:vec![]};
+            let user=subplan(&user_indices,user_resources.clone());
+            let user_before=before.iter().filter(|e|user_resources.contains(&e.resource)).cloned().collect::<Vec<_>>();
+            let mut statuses=LocalAdapter.batch(&user,&user_before)?;
+            if statuses.iter().any(|s|s.status!="applied") {for s in &mut statuses{s.index=user_indices[s.index]}for i in admin_indices{statuses.push(StepStatus{index:i,status:"skipped".into(),error:None})}statuses.sort_by_key(|s|s.index);return Ok(statuses)}
+            let admin_resources=plan.resources.iter().filter(|r|!user_resources.contains(r)).cloned().collect::<Vec<_>>();
+            let admin=subplan(&admin_indices,admin_resources.clone());
+            let admin_before=before.iter().filter(|e|admin_resources.contains(&e.resource)).cloned().collect::<Vec<_>>();
+            let result=self.batch(&admin,&admin_before);
+            if result.as_ref().map_or(true,|ss|ss.iter().any(|s|s.status!="applied")) {
+                for s in &mut statuses {let r=user.steps[s.index].resource()?;let previous=&user_before.iter().find(|e|e.resource==r).ok_or("Missing user snapshot")?.previous_value;let rollback=LocalAdapter.write(&r,previous);s.status=if rollback.is_ok(){"rolled_back"}else{"rollback_failed"}.into();s.error=rollback.err();}
+            }
+            for s in &mut statuses{s.index=user_indices[s.index]}
+            match result {Ok(mut ss)=>{for s in &mut ss{s.index=admin_indices[s.index]}statuses.extend(ss)},Err(error)=>for i in admin_indices{statuses.push(StepStatus{index:i,status:"failed".into(),error:Some(error.clone())})}}
+            statuses.sort_by_key(|s|s.index);return Ok(statuses)
+        }
+        let request=Request{version:1,plan:plan.clone(),before:before.to_vec(),read_only:false};
+        self.exchange(request)?.result
+    }
+}
+impl OsAdapter {
+    fn exchange(&self,request:Request)->Result<Response> {
         let bytes=serde_json::to_vec(&request).map_err(|e|e.to_string())?;
         let hash=format!("{:x}",Sha256::digest(&bytes));
         let dir=self.dir.join("helper"); fs::create_dir_all(&dir).map_err(|e|e.to_string())?;
@@ -49,7 +85,7 @@ impl SystemAdapter for OsAdapter {
         atomic_write(&path,&bytes)?;
         // Precreate the output as the caller. The helper never creates privileged output paths.
         if let Err(error)=atomic_write(&result_path,b"") {let _=fs::remove_file(&path);return Err(error)}
-        let result=(|| { elevate(&path,&hash)?; let response:Response=serde_json::from_slice(&fs::read(&result_path).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?; if response.digest!=hash{return Err("Helper response mismatch".into())} response.result })();
+        let result=(|| { elevate(&path,&hash)?; let response:Response=serde_json::from_slice(&fs::read(&result_path).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?; if response.digest!=hash{return Err("Helper response mismatch".into())} Ok(response) })();
         let _=fs::remove_file(&path); let _=fs::remove_file(result_path); result
     }
 }
@@ -80,6 +116,9 @@ fn elevate(path:&Path,hash:&str)->Result<()> {
 }
 fn validate_request(request:&Request)->Result<()> {
     if request.version!=1{return Err("Unknown helper schema".into())} validate(&request.plan,&allowlist())?;
+    if request.read_only {
+        if !matches!(request.plan.resources.as_slice(),[ResourceId::Ntp]|[ResourceId::Udp]) || !request.before.is_empty(){return Err("Read-only helper scope rejected".into())}return Ok(())
+    }
     let resources:BTreeSet<_>=request.before.iter().map(|e|e.resource.clone()).collect();
     if resources!=request.plan.resources.iter().cloned().collect() || resources.len()!=request.before.len(){return Err("Invalid helper snapshot scope".into())} Ok(())
 }
@@ -88,6 +127,12 @@ fn decode_request(bytes: &[u8], expected: &str) -> Result<Request> {
     if format!("{:x}",Sha256::digest(bytes))!=expected {return Err("Helper integrity mismatch".into())}
     let request:Request=serde_json::from_slice(bytes).map_err(|e|e.to_string())?;
     validate_request(&request)?; Ok(request)
+}
+fn execute_request(request:&Request,adapter:&impl SystemAdapter)->Result<(Vec<StepStatus>,Option<PreviousValue>)> {
+    validate_request(request)?;
+    if request.read_only {return Ok((vec![],Some(adapter.read(&request.plan.resources[0])?)))}
+    for entry in &request.before {if adapter.read(&entry.resource)?!=entry.previous_value{return Err("Resource changed since backup".into())}}
+    Ok((adapter.batch(&request.plan,&request.before)?,None))
 }
 fn open_result(path:&Path, request:&fs::File)->Result<fs::File> {
     let metadata=fs::symlink_metadata(path).map_err(|e|e.to_string())?;
@@ -122,9 +167,7 @@ pub fn entry()->Option<i32> {
         let mut output=open_result(&result_path,&file)?;
         let mut bytes=Vec::new();file.take(4*1024*1024+1).read_to_end(&mut bytes).map_err(|e|e.to_string())?;
         let request=decode_request(&bytes,&expected)?;let hash=expected;
-        // Re-read under elevation to detect changes since backup; never overwrite a stale snapshot.
-        for entry in &request.before {if LocalAdapter.read(&entry.resource)?!=entry.previous_value{return Err("Resource changed since backup".into())}}
-        let response=Response{digest:hash,result:LocalAdapter.batch(&request.plan,&request.before)};
+        let response=match execute_request(&request,&LocalAdapter){Ok((steps,snapshot))=>Response{digest:hash,result:Ok(steps),snapshot},Err(error)=>Response{digest:hash,result:Err(error),snapshot:None}};
         use std::io::Write;
         output.write_all(&serde_json::to_vec(&response).map_err(|e|e.to_string())?).and_then(|_|output.sync_all()).map_err(|e|e.to_string())?;
         Ok(()) })();
@@ -132,11 +175,34 @@ pub fn entry()->Option<i32> {
 }
 #[cfg(test)] mod tests {
     use super::*;
+    #[test] fn readonly_helper_cannot_write_or_expand_scope() {
+        struct Fake;
+        impl SystemAdapter for Fake {
+            fn read(&self,_:&ResourceId)->Result<PreviousValue>{Ok(PreviousValue::Text("false".into()))}
+            fn write(&self,_:&ResourceId,_:&PreviousValue)->Result<()>{panic!("Read-only requests must never write")}
+        }
+        for resource in [ResourceId::Ntp,ResourceId::Udp] {
+            let step=if resource==ResourceId::Ntp{FixStep::SetNtp{enabled:true}}else{FixStep::SetUdp{value:"null".into()}};
+            let mut request=Request{version:1,plan:FixPlan{id:"read".into(),check_id:"clock".into(),steps:vec![step],resources:vec![resource],requires_admin:true,preview:vec![]},before:vec![],read_only:true};
+            let (steps,snapshot)=execute_request(&request,&Fake).unwrap();assert!(steps.is_empty());assert_eq!(snapshot,Some(PreviousValue::Text("false".into())));
+            request.plan.resources.push(ResourceId::Timezone);assert!(execute_request(&request,&Fake).is_err());
+        }
+    }
+    #[test] fn new_typed_operations_are_scoped() {
+        for setting in crate::system_settings::Setting::ALL {
+            let resource=ResourceId::Setting(setting);
+            use crate::system_settings::Setting;
+            let id=match setting{Setting::Language=>"windows",Setting::Location=>"HKCU",Setting::LocationMachine=>"HKLM",_=>"eth0"};
+            let value=serde_json::json!({"entries":[{"id":id,"values":[]}]}).to_string();
+            let mut plan=FixPlan{id:"scope".into(),check_id:"system".into(),steps:vec![FixStep::SetSetting{setting,value}],resources:vec![resource],requires_admin:true,preview:vec![]};
+            assert!(validate(&plan,&allowlist()).is_ok());plan.resources=vec![ResourceId::Timezone];assert!(validate(&plan,&allowlist()).is_err());
+        }
+    }
     #[test] fn quoting(){assert_eq!(sh_quote("a'b;$()"),"'a'\"'\"'b;$()'");assert_eq!(powershell_quote("a'b;$()"),"'a''b;$()'");assert_eq!(applescript_quote("a\"b\\c"),"\"a\\\"b\\\\c\"");}
     #[test] fn rejects_paths_and_commands(){let mut p=FixPlan{id:"x".into(),check_id:"hosts".into(),resources:vec![ResourceId::File(PathBuf::from("/tmp/evil"))],steps:vec![FixStep::WriteFile{path:PathBuf::from("/tmp/evil"),contents:String::new()}],requires_admin:true,preview:vec![]};assert!(validate(&p,&allowlist()).is_err());p.resources=allowlist().into_iter().collect();p.steps=vec![FixStep::RunCommand{program:"sh".into(),args:vec![],undo:Box::new(FixStep::SetTimezone{zone:"UTC".into()})}];assert!(validate(&p,&allowlist()).is_err());}
     #[test] fn helper_integrity_scope_and_types() {
         let resource=ResourceId::File(hosts_path());
-        let request=Request{version:1,plan:FixPlan{id:"test".into(),check_id:"hosts".into(),steps:vec![FixStep::WriteFile{path:hosts_path(),contents:"fake".into()}],requires_admin:true,resources:vec![resource.clone()],preview:vec![]},before:vec![BackupEntry{resource,previous_value:PreviousValue::Absent}]};
+        let request=Request{version:1,plan:FixPlan{id:"test".into(),check_id:"hosts".into(),steps:vec![FixStep::WriteFile{path:hosts_path(),contents:"fake".into()}],requires_admin:true,resources:vec![resource.clone()],preview:vec![]},before:vec![BackupEntry{resource,previous_value:PreviousValue::Absent}],read_only:false};
         let bytes=serde_json::to_vec(&request).unwrap();let hash=format!("{:x}",Sha256::digest(&bytes));
         assert!(decode_request(&bytes,&hash).is_ok());assert!(decode_request(&bytes,"bad").is_err());
         let mut request=request;request.before.clear();assert!(validate_request(&request).is_err());
