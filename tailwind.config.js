@@ -1,0 +1,58 @@
+/** @type {import('tailwindcss').Config} */
+export default {
+  darkMode: "class",
+  content: ["./index.html", "./src/**/*.{ts,tsx}"],
+  theme: {
+    extend: {
+      colors: {
+        "notice-info-bg": "rgb(var(--notice-info-bg) / <alpha-value>)",
+        "notice-info-border": "rgb(var(--notice-info-border) / <alpha-value>)",
+        "notice-info-ink": "rgb(var(--notice-info-ink) / <alpha-value>)",
+        "notice-risk-bg": "rgb(var(--notice-risk-bg) / <alpha-value>)",
+        "notice-risk-border": "rgb(var(--notice-risk-border) / <alpha-value>)",
+        "notice-risk-ink": "rgb(var(--notice-risk-ink) / <alpha-value>)",
+        "on-teal": "rgb(var(--on-teal) / <alpha-value>)",
+        "on-ink": "rgb(var(--on-ink) / <alpha-value>)",
+        "hover": "rgb(var(--hover) / <alpha-value>)",
+        "status-pass-bg": "rgb(var(--status-pass-bg) / <alpha-value>)",
+        "status-pass-ink": "rgb(var(--status-pass-ink) / <alpha-value>)",
+        "status-pass-border": "rgb(var(--status-pass-border) / <alpha-value>)",
+        "status-warn-bg": "rgb(var(--status-warn-bg) / <alpha-value>)",
+        "status-warn-ink": "rgb(var(--status-warn-ink) / <alpha-value>)",
+        "status-warn-border": "rgb(var(--status-warn-border) / <alpha-value>)",
+        "status-fail-bg": "rgb(var(--status-fail-bg) / <alpha-value>)",
+        "status-fail-ink": "rgb(var(--status-fail-ink) / <alpha-value>)",
+        "status-fail-border": "rgb(var(--status-fail-border) / <alpha-value>)",
+        "status-inconclusive-bg": "rgb(var(--status-inconclusive-bg) / <alpha-value>)",
+        "status-inconclusive-ink": "rgb(var(--status-inconclusive-ink) / <alpha-value>)",
+        "status-inconclusive-border": "rgb(var(--status-inconclusive-border) / <alpha-value>)",
+        "status-neutral-bg": "rgb(var(--status-neutral-bg) / <alpha-value>)",
+        "status-neutral-ink": "rgb(var(--status-neutral-ink) / <alpha-value>)",
+        "status-neutral-border": "rgb(var(--status-neutral-border) / <alpha-value>)",
+
+        paper: "rgb(var(--paper) / <alpha-value>)",
+        card: "rgb(var(--card) / <alpha-value>)",
+        ink: "rgb(var(--ink) / <alpha-value>)",
+        muted: "rgb(var(--muted) / <alpha-value>)",
+        line: "rgb(var(--line) / <alpha-value>)",
+        teal: "rgb(var(--teal) / <alpha-value>)",
+        "teal-ink": "rgb(var(--teal-ink) / <alpha-value>)",
+      },
+      fontFamily: {
+        serif: ["Palatino", "Iowan Old Style", "Songti SC", "Noto Serif CJK SC", "serif"],
+        sans: [
+          "Segoe UI",
+          "Noto Sans CJK SC",
+          "Noto Sans CJK JP",
+          "Noto Sans CJK KR",
+          "WenQuanYi Micro Hei",
+          "sans-serif",
+        ],
+      },
+      boxShadow: {
+        card: "var(--shadow)",
+      },
+    },
+  },
+  plugins: [],
+};

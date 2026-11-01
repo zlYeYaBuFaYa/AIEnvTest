@@ -1,0 +1,29 @@
+{
+ "adapters": [
+  {"ifIndex":4,"Name":"以太网","InterfaceDescription":"Intel Ethernet","InterfaceType":6,"MediaType":0,"PhysicalMediaType":14,"Status":"Up","Virtual":false,"HardwareInterface":true},
+  {"ifIndex":8,"Name":"WLAN 2","InterfaceDescription":"Intel Wi-Fi","InterfaceType":71,"Status":"Disconnected","Virtual":false,"HardwareInterface":true},
+  {"ifIndex":20,"Name":"工作网络","InterfaceDescription":"Wintun Userspace Tunnel","DriverDescription":"Wintun","ComponentID":"wintun","InterfaceType":6,"Status":"Up","Virtual":true,"HardwareInterface":false},
+  {"ifIndex":30,"Name":"vEthernet (Default Switch)","InterfaceDescription":"Hyper-V Virtual Ethernet Adapter","InterfaceType":6,"Status":"Up","Virtual":true,"HardwareInterface":false}
+ ],
+ "interfaces":[
+  {"ifIndex":4,"AddressFamily":2,"ConnectionState":1,"InterfaceMetric":25},
+  {"ifIndex":8,"AddressFamily":2,"ConnectionState":2,"InterfaceMetric":1},
+  {"ifIndex":20,"AddressFamily":2,"ConnectionState":"Connected","InterfaceMetric":5},
+  {"ifIndex":30,"AddressFamily":2,"ConnectionState":1,"InterfaceMetric":1}
+ ],
+ "routes":[
+  {"ifIndex":4,"DestinationPrefix":"0.0.0.0/0","NextHop":"192.168.1.1","RouteMetric":5,"InterfaceMetric":25},
+  {"ifIndex":8,"DestinationPrefix":"0.0.0.0/0","NextHop":"192.168.2.1","RouteMetric":0,"InterfaceMetric":1},
+  {"ifIndex":20,"DestinationPrefix":"0.0.0.0/0","NextHop":"0.0.0.0","RouteMetric":1,"InterfaceMetric":5}
+ ],
+ "dns":[
+  {"InterfaceIndex":4,"InterfaceAlias":"以太网","AddressFamily":2,"ServerAddresses":["192.168.1.1"]},
+  {"InterfaceIndex":8,"InterfaceAlias":"WLAN 2","AddressFamily":2,"ServerAddresses":["223.5.5.5"]},
+  {"InterfaceIndex":20,"InterfaceAlias":"工作网络","AddressFamily":2,"ServerAddresses":["1.1.1.1","8.8.8.8"]},
+  {"InterfaceIndex":30,"InterfaceAlias":"vEthernet (Default Switch)","AddressFamily":2,"ServerAddresses":["10.0.0.1"]}
+ ],
+ "nrpt":[
+  {"Namespace":[".claude.ai"],"NameServers":["9.9.9.9"],"DirectAccessEnabled":false,"DnsOverHttpsEnabled":false},
+  {"Namespace":[".anthropic.com"],"NameServers":"149.112.112.112"}
+ ]
+}

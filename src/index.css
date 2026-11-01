@@ -1,0 +1,115 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --paper: 243 238 230;
+  --card: 255 253 248;
+  --ink: 28 25 21;
+  --muted: 95 87 78;
+  --line: 228 217 200;
+  --teal: 14 107 98;
+  --teal-ink: 8 72 66;
+  --on-teal: 255 255 255;
+  --on-ink: 255 253 248;
+  --hover: 232 225 215;
+  --notice-info-bg: 231 244 242;
+  --notice-info-border: 201 228 224;
+  --notice-info-ink: 8 72 66;
+  --notice-risk-bg: 251 243 228;
+  --notice-risk-border: 234 215 176;
+  --notice-risk-ink: 120 63 15;
+  --status-pass-bg: 236 253 245;
+  --status-pass-ink: 6 95 70;
+  --status-pass-border: 5 150 105;
+  --status-warn-bg: 255 251 235;
+  --status-warn-ink: 120 53 15;
+  --status-warn-border: 180 83 9;
+  --status-fail-bg: 254 242 242;
+  --status-fail-ink: 153 27 27;
+  --status-fail-border: 185 28 28;
+  --status-inconclusive-bg: 238 242 255;
+  --status-inconclusive-ink: 67 56 129;
+  --status-inconclusive-border: 99 102 161;
+  --status-neutral-bg: 245 245 244;
+  --status-neutral-ink: 68 64 60;
+  --status-neutral-border: 120 113 108;
+  color-scheme: light;
+  --shadow: 0 1px 0 #1c19150a, 0 12px 32px #503a1c0f;
+  --ring-offset: #fffdf8;
+  --selection: #cfe7e3;
+  --page-glow: #0e6b6214;
+  --page-top: #f7f3ec;
+  --page-bottom: #efe6d8;
+}
+.dark {
+  --paper: 21 19 15;
+  --card: 30 27 23;
+  --ink: 236 230 220;
+  --muted: 165 155 142;
+  --line: 52 48 42;
+  --teal: 63 179 165;
+  --teal-ink: 104 201 188;
+  --on-teal: 16 39 35;
+  --on-ink: 30 27 23;
+  --hover: 48 43 36;
+  --notice-info-bg: 24 45 41;
+  --notice-info-border: 48 86 78;
+  --notice-info-ink: 156 221 208;
+  --notice-risk-bg: 48 39 24;
+  --notice-risk-border: 92 73 44;
+  --notice-risk-ink: 233 193 130;
+  --status-pass-bg: 25 46 37;
+  --status-pass-ink: 156 219 185;
+  --status-pass-border: 74 155 115;
+  --status-warn-bg: 48 39 24;
+  --status-warn-ink: 233 193 130;
+  --status-warn-border: 174 133 72;
+  --status-fail-bg: 53 30 29;
+  --status-fail-ink: 241 170 165;
+  --status-fail-border: 189 106 99;
+  --status-inconclusive-bg: 37 41 65;
+  --status-inconclusive-ink: 183 190 236;
+  --status-inconclusive-border: 129 140 196;
+  --status-neutral-bg: 43 39 33;
+  --status-neutral-ink: 195 185 171;
+  --status-neutral-border: 128 117 104;
+  color-scheme: dark;
+  --shadow: 0 1px 0 #ffffff04, 0 12px 32px #00000033;
+  --ring-offset: #1e1b17;
+  --selection: #30564e;
+  --page-glow: #3fb3a510;
+  --page-top: #1b1813;
+  --page-bottom: #12110e;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background:
+    radial-gradient(1200px 500px at 10% -10%, var(--page-glow), transparent 55%),
+    linear-gradient(180deg, var(--page-top) 0%, rgb(var(--paper)) 40%, var(--page-bottom) 100%);
+  color: rgb(var(--ink));
+  font-family: "Segoe UI", "Noto Sans CJK SC", "Noto Sans CJK JP", "Noto Sans CJK KR", "WenQuanYi Micro Hei", sans-serif;
+}
+
+button,
+select {
+  font: inherit;
+}
+
+::selection {
+  background: var(--selection);
+}
+
+@layer base {
+  button {
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal;
+    --tw-ring-offset-color: var(--ring-offset);
+  }
+}
