@@ -1,0 +1,395 @@
+{
+  "notes": "Home regions for overseas staff. Mainland China, Hong Kong, and Macao are intentionally absent. Every country here is on Anthropic's supported-regions list.",
+  "regions": [
+    {
+      "id": "us",
+      "country": "US",
+      "group": "americas",
+      "name": {"en": "United States", "zh-CN": "美国", "ja": "アメリカ合衆国", "ko": "미국"},
+      "timezones": ["America/New_York", "America/Detroit", "America/Kentucky/Louisville", "America/Indiana/Indianapolis", "America/Chicago", "America/Denver", "America/Boise", "America/Phoenix", "America/Los_Angeles", "America/Anchorage", "America/Juneau", "America/Nome", "America/Adak", "Pacific/Honolulu", "America/Puerto_Rico"],
+      "languages": ["en-US"],
+      "cities": [],
+      "recommendedDns": ["1.1.1.1", "1.0.0.1", "8.8.8.8", "8.8.4.4", "9.9.9.9"]
+    },
+    {
+      "id": "ca",
+      "country": "CA",
+      "group": "americas",
+      "name": {"en": "Canada", "zh-CN": "加拿大", "ja": "カナダ", "ko": "캐나다"},
+      "timezones": ["America/St_Johns", "America/Halifax", "America/Glace_Bay", "America/Toronto", "America/Winnipeg", "America/Regina", "America/Edmonton", "America/Vancouver", "America/Whitehorse", "America/Yellowknife", "America/Iqaluit"],
+      "languages": ["en-CA", "fr-CA"],
+      "cities": [],
+      "recommendedDns": ["1.1.1.1", "1.0.0.1", "8.8.8.8", "8.8.4.4", "9.9.9.9"]
+    },
+    {
+      "id": "gb",
+      "country": "GB",
+      "group": "europe",
+      "name": {"en": "United Kingdom", "zh-CN": "英国", "ja": "イギリス", "ko": "영국"},
+      "timezones": ["Europe/London"],
+      "languages": ["en-GB"],
+      "cities": [],
+      "recommendedDns": ["1.1.1.1", "1.0.0.1", "8.8.8.8", "9.9.9.9"]
+    },
+    {
+      "id": "ie",
+      "country": "IE",
+      "group": "europe",
+      "name": {"en": "Ireland", "zh-CN": "爱尔兰", "ja": "アイルランド", "ko": "아일랜드"},
+      "timezones": ["Europe/Dublin"],
+      "languages": ["en-IE"],
+      "cities": [],
+      "recommendedDns": ["1.1.1.1", "8.8.8.8", "9.9.9.9"]
+    },
+    {
+      "id": "de",
+      "country": "DE",
+      "group": "europe",
+      "name": {"en": "Germany", "zh-CN": "德国", "ja": "ドイツ", "ko": "독일"},
+      "timezones": ["Europe/Berlin"],
+      "languages": ["de-DE"],
+      "cities": [],
+      "recommendedDns": ["1.1.1.1", "8.8.8.8", "9.9.9.9"]
+    },
+    {
+      "id": "fr",
+      "country": "FR",
+      "group": "europe",
+      "name": {"en": "France", "zh-CN": "法国", "ja": "フランス", "ko": "프랑스"},
+      "timezones": ["Europe/Paris"],
+      "languages": ["fr-FR"],
+      "cities": [],
+      "recommendedDns": ["1.1.1.1", "8.8.8.8", "9.9.9.9"]
+    },
+    {
+      "id": "nl",
+      "country": "NL",
+      "group": "europe",
+      "name": {"en": "Netherlands", "zh-CN": "荷兰", "ja": "オランダ", "ko": "네덜란드"},
+      "timezones": ["Europe/Amsterdam"],
+      "languages": ["nl-NL"],
+      "cities": [],
+      "recommendedDns": ["1.1.1.1", "8.8.8.8", "9.9.9.9"]
+    },
+    {
+      "id": "be",
+      "country": "BE",
+      "group": "europe",
+      "name": {"en": "Belgium", "zh-CN": "比利时", "ja": "ベルギー", "ko": "벨기에"},
+      "timezones": ["Europe/Brussels"],
+      "languages": ["nl-BE", "fr-BE", "de-BE"],
+      "cities": [],
+      "recommendedDns": ["1.1.1.1", "8.8.8.8", "9.9.9.9"]
+    },
+    {
+      "id": "lu",
+      "country": "LU",
+      "group": "europe",
+      "name": {"en": "Luxembourg", "zh-CN": "卢森堡", "ja": "ルクセンブルク", "ko": "룩셈부르크"},
+      "timezones": ["Europe/Luxembourg"],
+      "languages": ["fr-LU", "de-LU"],
+      "cities": [],
+      "recommendedDns": ["1.1.1.1", "8.8.8.8", "9.9.9.9"]
+    },
+    {
+      "id": "at",
+      "country": "AT",
+      "group": "europe",
+      "name": {"en": "Austria", "zh-CN": "奥地利", "ja": "オーストリア", "ko": "오스트리아"},
+      "timezones": ["Europe/Vienna"],
+      "languages": ["de-AT"],
+      "cities": [],
+      "recommendedDns": ["1.1.1.1", "8.8.8.8", "9.9.9.9"]
+    },
+    {
+      "id": "ch",
+      "country": "CH",
+      "group": "europe",
+      "name": {"en": "Switzerland", "zh-CN": "瑞士", "ja": "スイス", "ko": "스위스"},
+      "timezones": ["Europe/Zurich"],
+      "languages": ["de-CH", "fr-CH", "it-CH"],
+      "cities": [],
+      "recommendedDns": ["1.1.1.1", "8.8.8.8", "9.9.9.9"]
+    },
+    {
+      "id": "it",
+      "country": "IT",
+      "group": "europe",
+      "name": {"en": "Italy", "zh-CN": "意大利", "ja": "イタリア", "ko": "이탈리아"},
+      "timezones": ["Europe/Rome"],
+      "languages": ["it-IT"],
+      "cities": [],
+      "recommendedDns": ["1.1.1.1", "8.8.8.8", "9.9.9.9"]
+    },
+    {
+      "id": "es",
+      "country": "ES",
+      "group": "europe",
+      "name": {"en": "Spain", "zh-CN": "西班牙", "ja": "スペイン", "ko": "스페인"},
+      "timezones": ["Europe/Madrid", "Atlantic/Canary"],
+      "languages": ["es-ES"],
+      "cities": [],
+      "recommendedDns": ["1.1.1.1", "8.8.8.8", "9.9.9.9"]
+    },
+    {
+      "id": "pt",
+      "country": "PT",
+      "group": "europe",
+      "name": {"en": "Portugal", "zh-CN": "葡萄牙", "ja": "ポルトガル", "ko": "포르투갈"},
+      "timezones": ["Europe/Lisbon", "Atlantic/Madeira", "Atlantic/Azores"],
+      "languages": ["pt-PT"],
+      "cities": [],
+      "recommendedDns": ["1.1.1.1", "8.8.8.8", "9.9.9.9"]
+    },
+    {
+      "id": "se",
+      "country": "SE",
+      "group": "europe",
+      "name": {"en": "Sweden", "zh-CN": "瑞典", "ja": "スウェーデン", "ko": "스웨덴"},
+      "timezones": ["Europe/Stockholm"],
+      "languages": ["sv-SE"],
+      "cities": [],
+      "recommendedDns": ["1.1.1.1", "8.8.8.8", "9.9.9.9"]
+    },
+    {
+      "id": "dk",
+      "country": "DK",
+      "group": "europe",
+      "name": {"en": "Denmark", "zh-CN": "丹麦", "ja": "デンマーク", "ko": "덴마크"},
+      "timezones": ["Europe/Copenhagen"],
+      "languages": ["da-DK"],
+      "cities": [],
+      "recommendedDns": ["1.1.1.1", "8.8.8.8", "9.9.9.9"]
+    },
+    {
+      "id": "fi",
+      "country": "FI",
+      "group": "europe",
+      "name": {"en": "Finland", "zh-CN": "芬兰", "ja": "フィンランド", "ko": "핀란드"},
+      "timezones": ["Europe/Helsinki"],
+      "languages": ["fi-FI", "sv-FI"],
+      "cities": [],
+      "recommendedDns": ["1.1.1.1", "8.8.8.8", "9.9.9.9"]
+    },
+    {
+      "id": "no",
+      "country": "NO",
+      "group": "europe",
+      "name": {"en": "Norway", "zh-CN": "挪威", "ja": "ノルウェー", "ko": "노르웨이"},
+      "timezones": ["Europe/Oslo"],
+      "languages": ["nb-NO", "nn-NO"],
+      "cities": [],
+      "recommendedDns": ["1.1.1.1", "8.8.8.8", "9.9.9.9"]
+    },
+    {
+      "id": "is",
+      "country": "IS",
+      "group": "europe",
+      "name": {"en": "Iceland", "zh-CN": "冰岛", "ja": "アイスランド", "ko": "아이슬란드"},
+      "timezones": ["Atlantic/Reykjavik"],
+      "languages": ["is-IS"],
+      "cities": [],
+      "recommendedDns": ["1.1.1.1", "8.8.8.8", "9.9.9.9"]
+    },
+    {
+      "id": "pl",
+      "country": "PL",
+      "group": "europe",
+      "name": {"en": "Poland", "zh-CN": "波兰", "ja": "ポーランド", "ko": "폴란드"},
+      "timezones": ["Europe/Warsaw"],
+      "languages": ["pl-PL"],
+      "cities": [],
+      "recommendedDns": ["1.1.1.1", "8.8.8.8", "9.9.9.9"]
+    },
+    {
+      "id": "cz",
+      "country": "CZ",
+      "group": "europe",
+      "name": {"en": "Czechia", "zh-CN": "捷克", "ja": "チェコ", "ko": "체코"},
+      "timezones": ["Europe/Prague"],
+      "languages": ["cs-CZ"],
+      "cities": [],
+      "recommendedDns": ["1.1.1.1", "8.8.8.8", "9.9.9.9"]
+    },
+    {
+      "id": "gr",
+      "country": "GR",
+      "group": "europe",
+      "name": {"en": "Greece", "zh-CN": "希腊", "ja": "ギリシャ", "ko": "그리스"},
+      "timezones": ["Europe/Athens"],
+      "languages": ["el-GR"],
+      "cities": [],
+      "recommendedDns": ["1.1.1.1", "8.8.8.8", "9.9.9.9"]
+    },
+    {
+      "id": "hu",
+      "country": "HU",
+      "group": "europe",
+      "name": {"en": "Hungary", "zh-CN": "匈牙利", "ja": "ハンガリー", "ko": "헝가리"},
+      "timezones": ["Europe/Budapest"],
+      "languages": ["hu-HU"],
+      "cities": [],
+      "recommendedDns": ["1.1.1.1", "8.8.8.8", "9.9.9.9"]
+    },
+    {
+      "id": "ro",
+      "country": "RO",
+      "group": "europe",
+      "name": {"en": "Romania", "zh-CN": "罗马尼亚", "ja": "ルーマニア", "ko": "루마니아"},
+      "timezones": ["Europe/Bucharest"],
+      "languages": ["ro-RO"],
+      "cities": [],
+      "recommendedDns": ["1.1.1.1", "8.8.8.8", "9.9.9.9"]
+    },
+    {
+      "id": "sk",
+      "country": "SK",
+      "group": "europe",
+      "name": {"en": "Slovakia", "zh-CN": "斯洛伐克", "ja": "スロバキア", "ko": "슬로바키아"},
+      "timezones": ["Europe/Bratislava"],
+      "languages": ["sk-SK"],
+      "cities": [],
+      "recommendedDns": ["1.1.1.1", "8.8.8.8", "9.9.9.9"]
+    },
+    {
+      "id": "si",
+      "country": "SI",
+      "group": "europe",
+      "name": {"en": "Slovenia", "zh-CN": "斯洛文尼亚", "ja": "スロベニア", "ko": "슬로베니아"},
+      "timezones": ["Europe/Ljubljana"],
+      "languages": ["sl-SI"],
+      "cities": [],
+      "recommendedDns": ["1.1.1.1", "8.8.8.8", "9.9.9.9"]
+    },
+    {
+      "id": "hr",
+      "country": "HR",
+      "group": "europe",
+      "name": {"en": "Croatia", "zh-CN": "克罗地亚", "ja": "クロアチア", "ko": "크로아티아"},
+      "timezones": ["Europe/Zagreb"],
+      "languages": ["hr-HR"],
+      "cities": [],
+      "recommendedDns": ["1.1.1.1", "8.8.8.8", "9.9.9.9"]
+    },
+    {
+      "id": "bg",
+      "country": "BG",
+      "group": "europe",
+      "name": {"en": "Bulgaria", "zh-CN": "保加利亚", "ja": "ブルガリア", "ko": "불가리아"},
+      "timezones": ["Europe/Sofia"],
+      "languages": ["bg-BG"],
+      "cities": [],
+      "recommendedDns": ["1.1.1.1", "8.8.8.8", "9.9.9.9"]
+    },
+    {
+      "id": "ee",
+      "country": "EE",
+      "group": "europe",
+      "name": {"en": "Estonia", "zh-CN": "爱沙尼亚", "ja": "エストニア", "ko": "에스토니아"},
+      "timezones": ["Europe/Tallinn"],
+      "languages": ["et-EE"],
+      "cities": [],
+      "recommendedDns": ["1.1.1.1", "8.8.8.8", "9.9.9.9"]
+    },
+    {
+      "id": "lv",
+      "country": "LV",
+      "group": "europe",
+      "name": {"en": "Latvia", "zh-CN": "拉脱维亚", "ja": "ラトビア", "ko": "라트비아"},
+      "timezones": ["Europe/Riga"],
+      "languages": ["lv-LV"],
+      "cities": [],
+      "recommendedDns": ["1.1.1.1", "8.8.8.8", "9.9.9.9"]
+    },
+    {
+      "id": "lt",
+      "country": "LT",
+      "group": "europe",
+      "name": {"en": "Lithuania", "zh-CN": "立陶宛", "ja": "リトアニア", "ko": "리투아니아"},
+      "timezones": ["Europe/Vilnius"],
+      "languages": ["lt-LT"],
+      "cities": [],
+      "recommendedDns": ["1.1.1.1", "8.8.8.8", "9.9.9.9"]
+    },
+    {
+      "id": "cy",
+      "country": "CY",
+      "group": "europe",
+      "name": {"en": "Cyprus", "zh-CN": "塞浦路斯", "ja": "キプロス", "ko": "키프로스"},
+      "timezones": ["Asia/Nicosia"],
+      "languages": ["el-CY", "en-CY"],
+      "cities": [],
+      "recommendedDns": ["1.1.1.1", "8.8.8.8", "9.9.9.9"]
+    },
+    {
+      "id": "mt",
+      "country": "MT",
+      "group": "europe",
+      "name": {"en": "Malta", "zh-CN": "马耳他", "ja": "マルタ", "ko": "몰타"},
+      "timezones": ["Europe/Malta"],
+      "languages": ["mt-MT", "en-MT"],
+      "cities": [],
+      "recommendedDns": ["1.1.1.1", "8.8.8.8", "9.9.9.9"]
+    },
+    {
+      "id": "jp",
+      "country": "JP",
+      "group": "asiaPacific",
+      "name": {"en": "Japan", "zh-CN": "日本", "ja": "日本", "ko": "일본"},
+      "timezones": ["Asia/Tokyo"],
+      "languages": ["ja-JP"],
+      "cities": ["Tokyo"],
+      "recommendedDns": ["1.1.1.1", "1.0.0.1", "8.8.8.8", "8.8.4.4", "9.9.9.9"]
+    },
+    {
+      "id": "kr",
+      "country": "KR",
+      "group": "asiaPacific",
+      "name": {"en": "South Korea", "zh-CN": "韩国", "ja": "韓国", "ko": "대한민국"},
+      "timezones": ["Asia/Seoul"],
+      "languages": ["ko-KR"],
+      "cities": ["Seoul"],
+      "recommendedDns": ["1.1.1.1", "8.8.8.8", "9.9.9.9"]
+    },
+    {
+      "id": "sg",
+      "country": "SG",
+      "group": "asiaPacific",
+      "name": {"en": "Singapore", "zh-CN": "新加坡", "ja": "シンガポール", "ko": "싱가포르"},
+      "timezones": ["Asia/Singapore"],
+      "languages": ["en-SG", "zh-SG"],
+      "cities": ["Singapore"],
+      "recommendedDns": ["1.1.1.1", "8.8.8.8", "9.9.9.9"]
+    },
+    {
+      "id": "tw",
+      "country": "TW",
+      "group": "asiaPacific",
+      "name": {"en": "Taiwan", "zh-CN": "台湾", "ja": "台湾", "ko": "대만"},
+      "timezones": ["Asia/Taipei"],
+      "languages": ["zh-TW", "zh-Hant"],
+      "cities": ["Taipei"],
+      "recommendedDns": ["1.1.1.1", "8.8.8.8", "9.9.9.9"]
+    },
+    {
+      "id": "au",
+      "country": "AU",
+      "group": "asiaPacific",
+      "name": {"en": "Australia", "zh-CN": "澳大利亚", "ja": "オーストラリア", "ko": "호주"},
+      "timezones": ["Australia/Lord_Howe", "Australia/Sydney", "Australia/Melbourne", "Australia/Brisbane", "Australia/Adelaide", "Australia/Hobart", "Australia/Darwin", "Australia/Perth"],
+      "languages": ["en-AU"],
+      "cities": [],
+      "recommendedDns": ["1.1.1.1", "8.8.8.8", "9.9.9.9"]
+    },
+    {
+      "id": "nz",
+      "country": "NZ",
+      "group": "asiaPacific",
+      "name": {"en": "New Zealand", "zh-CN": "新西兰", "ja": "ニュージーランド", "ko": "뉴질랜드"},
+      "timezones": ["Pacific/Auckland", "Pacific/Chatham"],
+      "languages": ["en-NZ"],
+      "cities": [],
+      "recommendedDns": ["1.1.1.1", "8.8.8.8", "9.9.9.9"]
+    }
+  ]
+}

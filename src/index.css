@@ -1,0 +1,38 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --paper: #f3eee6;
+  --card: #fffdf8;
+  --ink: #1c1915;
+  --muted: #5f574e;
+  --line: #e4d9c8;
+  --teal: #0e6b62;
+  --teal-ink: #084842;
+  color-scheme: light;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background:
+    radial-gradient(1200px 500px at 10% -10%, rgba(14, 107, 98, 0.08), transparent 55%),
+    linear-gradient(180deg, #f7f3ec 0%, var(--paper) 40%, #efe6d8 100%);
+  color: var(--ink);
+  font-family: "Segoe UI", "Noto Sans CJK SC", "Noto Sans CJK JP", "Noto Sans CJK KR", "WenQuanYi Micro Hei", sans-serif;
+}
+
+button,
+select {
+  font: inherit;
+}
+
+::selection {
+  background: #cfe7e3;
+}
