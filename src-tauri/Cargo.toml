@@ -1,0 +1,40 @@
+[package]
+name = "aienv"
+version = "0.1.0"
+description = "Home-region network environment checker for overseas staff"
+authors = ["AIEnv"]
+edition = "2021"
+rust-version = "1.91"
+
+[lib]
+name = "aienv_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+boa_engine = { version = "=0.22.0", default-features = false }
+getrandom = "0.3"
+sha2 = "0.10.9"
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "net", "io-util", "sync"] }
+async-trait = "0.1"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+thiserror = "2"
+x509-parser = "0.16"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+tokio-rustls = "0.26"
+rustls-native-certs = "0.8"
+webpki-roots = "0.26"
+futures = "0.3"
+url = "2"
+
+[profile.release]
+lto = false
+codegen-units = 4
+opt-level = 3
+strip = true
+panic = "abort"
