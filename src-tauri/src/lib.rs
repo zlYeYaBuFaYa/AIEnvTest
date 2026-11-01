@@ -1,3 +1,6 @@
+mod transaction;
+mod helper;
+mod repair_commands;
 mod redact;
 mod pac;
 mod browser;
@@ -20,6 +23,10 @@ use tauri::{Emitter, Manager};
 
 struct AppState {
     browser: Mutex<Option<browser::Hub>>,
+    region: Mutex<Option<String>>,
+    last_report: Mutex<Option<ScanReport>>,
+    plans: Mutex<std::collections::BTreeMap<String, transaction::FixPlan>>,
+    locks: std::sync::Arc<transaction::LockManager>,
 }
 
 #[tauri::command]
@@ -29,12 +36,15 @@ fn list_regions() -> Vec<RegionSummary> {
 
 #[tauri::command]
 async fn run_scan(app: tauri::AppHandle, region_id: String) -> Result<ScanReport, String> {
+    *app.state::<AppState>().region.lock().map_err(|e|e.to_string())? = Some(region_id.clone());
     let ready_app = app.clone();
+    let report_app = app.clone();
     let prepared = scan::execute_with(&region_id, move |hub| {
         let url = hub.public_url();
         if let Ok(mut guard) = ready_app.state::<AppState>().browser.lock() { *guard = Some(hub); }
         let _ = ready_app.emit("browser-ready", url);
     }, move |report| { let _ = app.emit("report-updated", report); }).await?;
+    *report_app.state::<AppState>().last_report.lock().map_err(|e|e.to_string())? = Some(prepared.report.clone());
     Ok(prepared.report)
 }
 
@@ -77,9 +87,10 @@ fn reopen_browser(state: tauri::State<'_, AppState>) -> Result<String, String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    if let Some(code) = helper::entry() { std::process::exit(code); }
     tauri::Builder::default()
-        .manage(AppState { browser: Mutex::new(None) })
-        .invoke_handler(tauri::generate_handler![list_regions, run_scan, render_markdown, write_export, reopen_browser])
+        .manage(AppState { browser: Mutex::new(None), region: Mutex::new(None), last_report: Mutex::new(None), plans: Mutex::new(Default::default()), locks: Default::default() })
+        .invoke_handler(tauri::generate_handler![list_regions, run_scan, render_markdown, write_export, reopen_browser, repair_commands::plan_fix, repair_commands::plan_fix_all_failed, repair_commands::apply_plan, repair_commands::backup, repair_commands::list_backups, repair_commands::restore, repair_commands::restore_all])
         .run(tauri::generate_context!())
         .expect("error while running AIEnv");
 }

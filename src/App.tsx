@@ -1,3 +1,4 @@
+import { useRepair } from "./Repair";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
@@ -40,6 +41,7 @@ export default function App() {
   }, []);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState("");
+  const repair = useRepair(report, setReport, setError, scanning);
 
   useEffect(() => {
     invoke<RegionSummary[]>("list_regions")
@@ -115,6 +117,7 @@ export default function App() {
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          {repair.historyButton}
           <div className="flex rounded-full border border-line bg-card p-1" role="group" aria-label={t("lang.label")}>
             {LANGS.map((item) => (
               <button
@@ -168,7 +171,7 @@ export default function App() {
             ))}
           </select>
         </label>
-        <Button className="md:min-w-36" onClick={scan} disabled={scanning || regions.length === 0}>
+        <Button className="md:min-w-36" onClick={scan} disabled={scanning || repair.busy || regions.length === 0}>
           {scanning ? t("scan.running") : report ? t("scan.again") : t("scan.action")}
         </Button>
         <Button variant="outline" size="sm" onClick={() => invoke("reopen_browser").catch((err: unknown) => setError(String(err)))} disabled={!browserReady}>
@@ -213,6 +216,7 @@ export default function App() {
                   {t("export.md")}
                 </Button>
               </div>
+              {repair.sidebar}
               {saved && <p className="mt-3 break-all text-xs text-muted">{saved}</p>}
               {report.browserUrl && (
                 <p className="mt-3 break-all text-xs text-muted">
@@ -229,7 +233,7 @@ export default function App() {
                     <h3 className="mb-2 px-1 text-xs font-semibold uppercase tracking-[0.14em] text-muted">{t(`group.${category}`)}</h3>
                     <div className="space-y-2">
                       {items.map((check) => (
-                        <CheckCard key={check.id} check={check} />
+                        <CheckCard key={check.id} check={check} actions={repair.actions(check.id)} />
                       ))}
                     </div>
                   </section>
@@ -240,6 +244,7 @@ export default function App() {
           </div>
         )}
       </div>
+      {repair.overlays}
     </div>
   );
 }
@@ -258,7 +263,7 @@ function Notice({ tone, title, body }: { tone: "info" | "risk"; title: string; b
   );
 }
 
-function CheckCard({ check }: { check: CheckResult }) {
+function CheckCard({ check, actions }: { check: CheckResult; actions: React.ReactNode }) {
   const { t } = useI18n();
   const border = {
     pass: "border-l-status-pass-border",
@@ -276,6 +281,7 @@ function CheckCard({ check }: { check: CheckResult }) {
         </span>
         <StatusBadge status={check.status} label={t(`status.${check.status}`)} />
       </summary>
+      {actions}
       <div className="mt-3 grid gap-3 border-t border-line pt-3 text-sm md:grid-cols-2">
         <FieldList title={t("field.observed")} entries={check.observed} />
         <FieldList title={t("field.expected")} entries={check.expected} />

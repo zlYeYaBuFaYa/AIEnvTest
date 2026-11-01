@@ -48,7 +48,7 @@ pub async fn execute_with(region_id: &str, ready: impl FnOnce(Hub), updated: imp
         checks: results,
         browser_url: ctx.browser_url.clone(),
         browser_opened: ctx.browser_opened,
-        phase: 1,
+        phase: 2,
     };
     let initial = ctx.browser_version();
     let mut current = report.clone();

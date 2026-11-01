@@ -541,7 +541,6 @@ impl EnvironmentCheck for Reachability {
 mod tests {
     use super::*;
     use crate::browser::BrowserPayload;
-    use crate::check::{BackupBlob, FixReport, PhaseError};
     use crate::intel::NullDirectory;
     use crate::platform;
     use crate::region;
@@ -633,36 +632,6 @@ mod tests {
         assert_eq!(v6.observed.get("error").map(String::as_str), Some("offline"));
     }
 
-    #[tokio::test]
-    async fn phase_two_methods_stay_unimplemented() {
-        struct Stub;
-        #[async_trait]
-        impl EnvironmentCheck for Stub {
-            fn meta(&self) -> CheckMeta {
-                CheckMeta { id: "stub", category: "system" }
-            }
-            async fn detect(&self, _ctx: &ScanContext) -> CheckResult {
-                unreachable!("detect is not under test")
-            }
-        }
-        let ctx = ScanContext::new(
-            region::find("us").unwrap().clone(),
-            platform::collect(),
-            Arc::new(NullDirectory),
-            Arc::new(StdMutex::new(None::<BrowserPayload>)),
-            "test".into(),
-            "http://127.0.0.1/".into(),
-            false,
-        );
-        let stub = Stub;
-        assert!(matches!(stub.backup(&ctx).await, Err(PhaseError::NotImplemented)));
-        assert!(matches!(
-            stub.restore(&ctx, &BackupBlob { id: "x".into(), payload: String::new() }).await,
-            Err(PhaseError::NotImplemented)
-        ));
-        assert!(matches!(stub.fix(&ctx).await, Err(PhaseError::NotImplemented)));
-        let _ = FixReport { id: "x".into(), changed: false, detail: String::new() };
-    }
 }
 
 #[cfg(test)] mod feature4_tests {

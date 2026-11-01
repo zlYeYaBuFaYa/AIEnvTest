@@ -2,7 +2,7 @@
 
 AIEnv is a desktop check for overseas staff who are physically in mainland China and want their computer to resemble a normal work environment in a home region where Claude is offered. It compares exit IP, routing, DNS, time, language, and the real browser profile with a region preset.
 
-Phase 1 detects and reports. It does not change the machine. Backup, restore, and repair exist on the check interface as unimplemented stubs for Phase 2.
+Scans are read-only. Confirmed repairs now use transactional backups and rollback; hosts cleanup is the first supported repair. See [repair transactions](docs/transactions.md) for the framework, helper boundary, and validation limits.
 
 ## Notices
 
@@ -72,8 +72,8 @@ React UI  --invoke-->  Tauri commands
                      ScanContext
                      /    |     \
             EnvironmentCheck   Platform snapshot     NetworkDirectory
-            detect/fix/        linux | macos |       PublicDirectory today
-            backup/restore     windows               (ipinfo, ip-api, bash.ws,
+            detect             linux | macos |       PublicDirectory today
+                               windows               (ipinfo, ip-api, bash.ws,
                                                        Google o-o.myaddr TXT)
                            |
                            v
@@ -81,14 +81,14 @@ React UI  --invoke-->  Tauri commands
               WebRTC, Intl timezone, languages, Accept-Language
 ```
 
-- One `EnvironmentCheck` trait per item: `detect`, `fix`, `backup`, `restore`. Only `detect` is implemented. The other three return "not implemented" and must not be treated as a repair.
+- One read-only `EnvironmentCheck` trait per item. Separate typed repair plans run through the transaction service and privileged `SystemAdapter` boundary.
 - OS-specific collection is behind `cfg`. Shared parsers are tested without a Mac or Windows machine.
 - IP geolocation, DNS leak, and EDNS client subnet sit behind `NetworkDirectory`, so a self-hosted directory can replace the public services later.
 - Browser signals are not read from the Tauri WebView. Its fingerprint is not the user's browser. The app serves a page on `127.0.0.1` only and opens it in the default browser.
 
 ## Phase 1 limits
 
-- Nothing is changed: no proxy edits, no hosts edits, no timezone changes.
+- Scans change no system settings. Confirmed hosts cleanup can change the hosts file; proxy, DNS, registry, and timezone repairs are not enabled.
 - UDP/QUIC is a routing inference, not a live QUIC handshake.
 - A PAC script is only text-searched for Claude and Anthropic names.
 - Datacenter detection uses ip-api's hosting flag when present, plus organization-name keywords. It is a hint, not a registry lookup.
